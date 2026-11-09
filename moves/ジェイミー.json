@@ -1182,7 +1182,7 @@
     "name": "パリィ",
     "command": "MPMK",
     "strength": "",
-    "startup": "",
+    "startup": "1",
     "hit": "",
     "block": "",
     "moveName": ""
@@ -1194,7 +1194,7 @@
     "name": "ジャスパ",
     "command": "MPMK",
     "strength": "",
-    "startup": "",
+    "startup": "1",
     "hit": "",
     "block": "",
     "moveName": ""
