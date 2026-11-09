@@ -734,7 +734,7 @@
   {
     "charId": "アレックス",
     "category": "通常投げ",
-    "moveId": "mai_5lplk",
+    "moveId": "alex_5lplk",
     "name": "前投げ",
     "command": "5LPLK",
     "strength": "",
@@ -746,7 +746,7 @@
   {
     "charId": "アレックス",
     "category": "通常投げ",
-    "moveId": "mai_4lplk",
+    "moveId": "alex_4lplk",
     "name": "後ろ投げ",
     "command": "4LPLK",
     "strength": "",
@@ -758,7 +758,7 @@
   {
     "charId": "アレックス",
     "category": "通常投げ",
-    "moveId": "mai_2lplk",
+    "moveId": "alex_2lplk",
     "name": "下投げ",
     "command": "2LPLK",
     "strength": "",
@@ -770,7 +770,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_66",
+    "moveId": "alex_66",
     "name": "前ステ",
     "command": "66",
     "strength": "",
@@ -782,7 +782,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_44",
+    "moveId": "alex_44",
     "name": "バクステ",
     "command": "44",
     "strength": "",
@@ -794,7 +794,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_hphk",
+    "moveId": "alex_hphk",
     "name": "インパクト",
     "command": "HPHK",
     "strength": "",
@@ -806,7 +806,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_b6hphk",
+    "moveId": "alex_b6hphk",
     "name": "Dリバ[ガード]",
     "command": "6HPHK",
     "strength": "",
@@ -818,7 +818,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_r6hphk",
+    "moveId": "alex_r6hphk",
     "name": "Dリバ[起き上がり]",
     "command": "6HPHK",
     "strength": "",
@@ -830,7 +830,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_p",
+    "moveId": "alex_p",
     "name": "パリィ",
     "command": "MPMK",
     "strength": "",
@@ -842,7 +842,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_pp",
+    "moveId": "alex_pp",
     "name": "ジャスパ",
     "command": "MPMK",
     "strength": "",
@@ -854,7 +854,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_pdr",
+    "moveId": "alex_pdr",
     "name": "PDR",
     "command": "66MPMK",
     "strength": "",
@@ -866,7 +866,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_cdr",
+    "moveId": "alex_cdr",
     "name": "CDR",
     "command": "66MPMK",
     "strength": "",
@@ -878,7 +878,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_6",
+    "moveId": "alex_6",
     "name": "前歩き",
     "command": "6",
     "strength": "",
@@ -890,7 +890,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_4",
+    "moveId": "alex_4",
     "name": "後ろ歩き",
     "command": "4",
     "strength": "",
@@ -902,7 +902,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_9",
+    "moveId": "alex_9",
     "name": "前ジャンプ",
     "command": "9",
     "strength": "",
@@ -914,7 +914,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_8",
+    "moveId": "alex_8",
     "name": "垂直ジャンプ",
     "command": "8",
     "strength": "",
@@ -926,7 +926,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_7",
+    "moveId": "alex_7",
     "name": "バックジャンプ",
     "command": "7",
     "strength": "",
@@ -938,7 +938,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_5",
+    "moveId": "alex_5",
     "name": "立ち",
     "command": "5",
     "strength": "",
@@ -950,7 +950,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_2",
+    "moveId": "alex_2",
     "name": "しゃがみ",
     "command": "2",
     "strength": "",
@@ -962,7 +962,7 @@
   {
     "charId": "アレックス",
     "category": "共通行動",
-    "moveId": "mai_delay",
+    "moveId": "alex_delay",
     "name": "ディレイ",
     "command": "delay",
     "strength": "",
