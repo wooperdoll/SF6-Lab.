@@ -798,7 +798,7 @@
     "name": "前ステ",
     "command": "66",
     "strength": "",
-    "startup": "-",
+    "startup": "全体19",
     "hit": "-",
     "block": "-",
     "moveName": ""
@@ -810,7 +810,7 @@
     "name": "バクステ",
     "command": "44",
     "strength": "",
-    "startup": "-",
+    "startup": "全体23",
     "hit": "-",
     "block": "-",
     "moveName": ""
