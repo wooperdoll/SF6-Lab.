@@ -36,6 +36,7 @@
     .character-scroll { scrollbar-gutter: stable; }
     .dragging-block { opacity: .45; }
     .drop-block { outline: 2px solid #22d3ee; outline-offset: 2px; }
+    .rich-combo-editor:empty::before { content: attr(data-placeholder); color: #64748b; pointer-events:none; }
   </style>
 </head>
 <body class="bg-slate-900 text-slate-200">
@@ -1136,6 +1137,7 @@
           const reference = doc(collection(db, 'artifacts', appId, 'users', user.uid, 'cards'));
           applyLocalWrite('cards', reference, {
             memoId: selectedMemoId,
+            title: '',
             blocks: [{ id: createId(), type: 'text', content: '' }],
             order: currentCards.length
           });
@@ -1152,8 +1154,8 @@
               <span className="text-sm font-semibold text-slate-300 hidden md:inline">Folders & Memos</span>
               <span className="text-sm font-semibold text-slate-300 md:hidden">Memos</span>
               <div className="flex space-x-1">
-                  <button onClick={() => openCreateModal('folder')} className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded transition-colors" title="New Folder"><FolderPlus size={16} /></button>
-                  <button onClick={() => openCreateModal({type: 'memo', folderId: null})} className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded transition-colors" title="New Root Memo"><FilePlus size={16} /></button>
+                  <button onClick={() => openCreateModal('folder')} className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded transition-colors" title="新しいフォルダーを作成"><FolderPlus size={16} /></button>
+                  <button onClick={() => openCreateModal({type: 'memo', folderId: null})} className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded transition-colors" title="新しいメモを作成"><FilePlus size={16} /></button>
               </div>
             </div>
             <div className={`flex-1 overflow-y-auto p-2 space-y-2 pb-20 ${dragOverTarget === 'root' ? 'bg-slate-800/20' : ''}`} onDragOver={(e) => handleDragOver(e, 'root')} onDrop={(e) => handleDrop(e, 'root', null, null)}>
@@ -1180,7 +1182,7 @@
               {currentMemos.filter(m => !m.folderId).map(memo => (
                  <MemoSidebarItem key={memo.id} memo={memo} selected={selectedMemoId === memo.id} onSelect={() => setSelectedMemoId(memo.id)} editingId={editingId} setEditingId={setEditingId} editValue={editValue} setEditValue={setEditValue} handleRename={handleRename} handleDragStart={handleDragStart} handleDragEnd={handleDragEnd} handleDragOver={handleDragOver} handleDrop={handleDrop} dragOverTarget={dragOverTarget} setDragOverTarget={setDragOverTarget} onDelete={handleDeleteMemo} />
               ))}
-              {currentFolders.length === 0 && currentMemos.length === 0 && <div className="text-center p-4 text-xs text-slate-500 italic mt-10">No items yet.</div>}
+              {currentFolders.length === 0 && currentMemos.length === 0 && <div className="text-center p-4 text-xs text-slate-500 italic mt-10">上のアイコンからフォルダー/メモを作成できます。</div>}
             </div>
           </aside>
           <main className="flex-1 flex flex-col bg-slate-900 overflow-hidden relative">
@@ -1189,7 +1191,7 @@
                 {currentCards.map((card, index) => <CardEditor key={card.id} card={card} moves={moves} db={db} appId={appId} user={user} onMove={direction => moveCard(card, direction)} isFirst={index === 0} isLast={index === currentCards.length - 1} applyLocalWrite={applyLocalWrite} stageCard={stageCard} />)}
                 <button onClick={handleAddCard} className="w-full py-4 border-2 border-dashed border-slate-700 rounded-xl text-slate-500 hover:text-cyan-400 hover:border-cyan-500 hover:bg-slate-800/30 transition-all flex items-center justify-center font-medium"><Plus size={20} className="mr-2" /> Add New Card</button>
               </div>
-            ) : <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">Select or create a memo</div>}
+            ) : <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">作成したメモはこちらに表示されます。</div>}
           </main>
           <Modal isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} title={deleteTarget?.type === 'folder' ? 'フォルダーを削除' : 'メモを削除'}>
             <div className="space-y-4">
@@ -1239,16 +1241,174 @@
        )
     }
 
-    function AutoExpandingTextarea({ value, onChange, placeholder, className }) {
-      const ref = useRef(null);
-      useEffect(() => { if (ref.current) { ref.current.style.height = '0px'; ref.current.style.height = Math.max(60, ref.current.scrollHeight) + 'px'; } }, [value]);
-      return <textarea ref={ref} value={value} onChange={onChange} placeholder={placeholder} className={`${className} overflow-hidden resize-none`} rows={1} />;
+    // One rich text stream per card. Existing text/combo blocks remain the
+    // Firestore format, so old cards and existing move references still work.
+    function RichComboDocument({ blocks, moves, onChange, onEditCombo, editorApi }) {
+      const editorRef = useRef(null);
+      const blocksRef = useRef(blocks);
+      const selectionRef = useRef(null);
+      blocksRef.current = blocks;
+      const eventsRef = useRef({ onChange, onEditCombo, moves });
+      eventsRef.current = { onChange, onEditCombo, moves };
+
+      const createComboNode = (block) => {
+        const node = document.createElement('span');
+        node.dataset.comboId = block.id;
+        node.contentEditable = 'false';
+        node.draggable = true;
+        node.title = 'クリックでコンボを編集・ドラッグで移動';
+        node.className = 'inline-flex flex-wrap items-center align-middle gap-1 px-2 py-1 mx-1 my-1 rounded-lg border border-cyan-800/60 bg-slate-950 text-xs cursor-pointer hover:border-cyan-500 max-w-full';
+        const appendLabel = (text, cls) => {
+          const item = document.createElement('span');
+          item.className = cls;
+          item.textContent = text;
+          node.appendChild(item);
+        };
+        const state = block.state === '通常' ? 'ノーマル' : (block.state || 'ノーマル');
+        if (state === 'カウンター') appendLabel('カウンター', 'bg-yellow-400 text-yellow-950 rounded px-1 font-bold');
+        if (state === 'パニカン') appendLabel('パニカン', 'bg-red-600 text-white rounded px-1 font-bold');
+        const ids = Array.isArray(block.moveIds) ? block.moveIds : [];
+        if (!ids.length) appendLabel('クリックでコンボを入力。', 'text-slate-500 italic');
+        ids.forEach((id, idx) => {
+          const move = eventsRef.current.moves.find(m => m.id === id || m.overrideId === id);
+          if (idx) appendLabel('›', 'text-slate-500');
+          const tone = move?.category === 'SA' || /^(SA[123]?|CA)$/i.test(move?.name || '') ? 'bg-purple-300 text-purple-950' : 'bg-slate-700 text-white';
+          appendLabel(move?.name || 'Unknown Move', `${tone} rounded px-1.5 py-0.5 font-semibold`);
+        });
+        if (block.dmg) appendLabel(`dmg: ${block.dmg}`, 'text-white font-semibold ml-1');
+        const details = [];
+        if (block.situation) details.push(`コンボ後の状況: ${block.situation}`);
+        if (block.selectionSituation) details.push(`選択場面: ${block.selectionSituation}`);
+        if (details.length) appendLabel(details.join('　'), 'text-white break-words');
+        return node;
+      };
+
+      const renderDocument = () => {
+        const root = editorRef.current;
+        if (!root) return;
+        root.replaceChildren();
+        blocksRef.current.forEach((block, idx) => {
+          if (block.type === 'combo') {
+            root.appendChild(createComboNode(block));
+          } else if (block.type === 'text') {
+            root.appendChild(document.createTextNode(block.content || ''));
+          }
+          // Legacy cards used separate paragraphs for each block.
+          if (idx < blocksRef.current.length - 1) {
+            const thisBlock = blocksRef.current[idx];
+            const next = blocksRef.current[idx + 1];
+            if (thisBlock.type === 'text' && next.type === 'text') root.appendChild(document.createTextNode('\n'));
+          }
+        });
+        root.dataset.rendered = JSON.stringify(blocksRef.current);
+      };
+
+      const extractDocument = () => {
+        const root = editorRef.current;
+        const existing = blocksRef.current;
+        const comboLookup = new Map(existing.filter(b => b.type === 'combo').map(b => [b.id, b]));
+        const oldTextIds = existing.filter(b => b.type === 'text').map(b => b.id);
+        const next = [];
+        let textBuffer = '';
+        const flushText = () => {
+          if (!textBuffer) return;
+          next.push({ id: oldTextIds.shift() || createId(), type: 'text', content: textBuffer });
+          textBuffer = '';
+        };
+        const traverse = (node) => {
+          if (node.nodeType === Node.TEXT_NODE) { textBuffer += node.nodeValue || ''; return; }
+          if (node.nodeType !== Node.ELEMENT_NODE) return;
+          const comboId = node.dataset?.comboId;
+          if (comboId && comboLookup.has(comboId)) { flushText(); next.push(comboLookup.get(comboId)); return; }
+          if (node.tagName === 'BR') { textBuffer += '\n'; return; }
+          const newline = node.tagName === 'DIV' || node.tagName === 'P';
+          if (newline && textBuffer && !textBuffer.endsWith('\n')) textBuffer += '\n';
+          Array.from(node.childNodes).forEach(traverse);
+        };
+        Array.from(root.childNodes).forEach(traverse);
+        flushText();
+        return next;
+      };
+      const handleInput = () => eventsRef.current.onChange(extractDocument());
+      const rememberCaret = () => {
+        const range = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0) : null;
+        if (range && editorRef.current?.contains(range.commonAncestorContainer)) selectionRef.current = range.cloneRange();
+      };
+      const insertCombo = (block) => {
+        const root = editorRef.current;
+        if (!root) return;
+        const node = createComboNode(block);
+        const storedRange = selectionRef.current;
+        const range = storedRange && root.contains(storedRange.commonAncestorContainer)
+          ? storedRange.cloneRange() : document.createRange();
+        if (!storedRange || !root.contains(storedRange.commonAncestorContainer)) { range.selectNodeContents(root); range.collapse(false); }
+        range.deleteContents();
+        range.insertNode(node);
+        const after = document.createTextNode(' ');
+        node.after(after);
+        range.setStartAfter(after); range.collapse(true);
+        const selection = window.getSelection();
+        selection.removeAllRanges(); selection.addRange(range);
+        selectionRef.current = range.cloneRange();
+        // The newly inserted combo must exist in the data lookup for extraction.
+        blocksRef.current = [...blocksRef.current, block];
+        handleInput();
+      };
+      editorApi.current = { insertCombo };
+
+      useEffect(() => { renderDocument(); }, []);
+      const newJson = JSON.stringify(blocks);
+      useEffect(() => {
+        const root = editorRef.current;
+        if (root && document.activeElement !== root && root.dataset.rendered !== newJson) renderDocument();
+      }, [newJson]);
+
+      const dragComboRef = useRef(null);
+      return (
+        <div ref={editorRef} contentEditable suppressContentEditableWarning spellCheck
+          role="textbox" aria-label="カードの文章とコンボ" aria-multiline="true"
+          data-placeholder="文章を入力。コンボは文章中の好きな位置に挿入できます。"
+          className="rich-combo-editor min-h-[90px] w-full whitespace-pre-wrap break-words rounded-md p-3 text-sm leading-8 text-slate-200 bg-slate-950/30 border border-slate-800 focus:outline-none focus:border-cyan-700"
+          onInput={handleInput} onKeyUp={rememberCaret} onMouseUp={rememberCaret}
+          onBlur={rememberCaret}
+          onClick={event => {
+            const hit = event.target.closest?.('[data-combo-id]');
+            if (!hit) return;
+            const block = blocksRef.current.find(b => b.id === hit.dataset.comboId && b.type === 'combo');
+            if (block) eventsRef.current.onEditCombo(block);
+          }}
+          onDragStart={event => {
+            const hit = event.target.closest?.('[data-combo-id]');
+            if (hit) {
+              dragComboRef.current = hit.dataset.comboId;
+              event.dataTransfer.setData('application/x-sf6-inline-combo', hit.dataset.comboId);
+              event.dataTransfer.effectAllowed = 'move';
+            }
+          }}
+          onDragOver={event => { if (dragComboRef.current) event.preventDefault(); }}
+          onDrop={event => {
+            const comboId = dragComboRef.current;
+            dragComboRef.current = null;
+            if (!comboId) return;
+            event.preventDefault();
+            const root = editorRef.current;
+            const combo = Array.from(root.querySelectorAll('[data-combo-id]')).find(node => node.dataset.comboId === comboId);
+            let range = document.caretRangeFromPoint?.(event.clientX, event.clientY);
+            if (!range && document.caretPositionFromPoint) {
+              const pos = document.caretPositionFromPoint(event.clientX, event.clientY);
+              if (pos) { range = document.createRange(); range.setStart(pos.offsetNode, pos.offset); range.collapse(true); }
+            }
+            if (!combo || !range || !root.contains(range.startContainer) || combo.contains(range.startContainer)) return;
+            range.insertNode(combo);
+            handleInput();
+          }}
+          onDragEnd={() => { dragComboRef.current = null; }}
+        />
+      );
     }
 
     function CardEditor({ card, moves, db, appId, user, onMove, isFirst, isLast, applyLocalWrite, stageCard }) {
       const [editingBlock, setEditingBlock] = useState(null);
-      const blockDragRef = useRef(null);
-      const [overBlockId, setOverBlockId] = useState(null);
       const initialBlocks = Array.isArray(card.blocks) ? card.blocks : [];
       const [blocks, setBlocks] = useState(initialBlocks);
       const blocksRef = useRef(initialBlocks);
@@ -1298,47 +1458,48 @@
       }, [card.id, incomingJson]);
       useEffect(() => () => flushSave(), [card.id]);
 
+      const [draftTitle, setDraftTitle] = useState(card.title || '');
+      const titleTimerRef = useRef(null);
+      const titleLatestRef = useRef(card.title || '');
+      const titleSavedRef = useRef(card.title || '');
+      const saveCardTitle = () => {
+        if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
+        titleTimerRef.current = null;
+        if (deletedRef.current || titleLatestRef.current === titleSavedRef.current) return;
+        titleSavedRef.current = titleLatestRef.current;
+        const io = ioRef.current;
+        io.applyLocalWrite('cards', doc(io.db, 'artifacts', io.appId, 'users', io.user.uid, 'cards', io.cardId), { title: titleLatestRef.current }, 'update');
+      };
+      useEffect(() => {
+        if (document.activeElement?.getAttribute('data-card-title') !== card.id && titleLatestRef.current === titleSavedRef.current) {
+          titleLatestRef.current = card.title || '';
+          titleSavedRef.current = card.title || '';
+          setDraftTitle(card.title || '');
+        }
+      }, [card.id, card.title]);
+      useEffect(() => () => {
+        if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
+        saveCardTitle();
+      }, [card.id]);
+
       const handleDeleteCard = async () => {
         if (!window.confirm('このカードを削除しますか？')) return;
         try {
           if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+          if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
           deletedRef.current = true;
           applyLocalWrite('cards', doc(db, 'artifacts', appId, 'users', user.uid, 'cards', card.id), null, 'delete');
         }
         catch (err) { console.error(err); alert(`カードを削除できませんでした: ${err.message}`); }
       };
 
+      const editorApi = useRef(null);
       const addBlock = (type) => {
-        const newBlock = type === 'text'
-          ? { id: createId(), type: 'text', content: '' }
-          : { id: createId(), type: 'combo', moveIds: [], state: 'ノーマル', dmg: '', situation: '' };
-        commitBlocks(previous => [...previous, newBlock]);
-        if (type === 'combo') setEditingBlock(newBlock);
-      };
-
-      const removeBlock = (blockId) => commitBlocks(previous => previous.filter(block => block.id !== blockId));
-      const beginBlockDrag = (event, blockId) => {
-        blockDragRef.current = blockId;
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('application/x-sf6-block', blockId);
-        event.dataTransfer.setData('text/plain', blockId);
-      };
-      const handleBlockDrop = (event, targetId) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const sourceId = blockDragRef.current || event.dataTransfer.getData('application/x-sf6-block');
-        blockDragRef.current = null;
-        setOverBlockId(null);
-        if (!sourceId || sourceId === targetId) return;
-        commitBlocks(previous => {
-          const ordered = [...previous];
-          const from = ordered.findIndex(block => block.id === sourceId);
-          const to = ordered.findIndex(block => block.id === targetId);
-          if (from < 0 || to < 0) return previous;
-          const [item] = ordered.splice(from, 1);
-          ordered.splice(to, 0, item);
-          return ordered;
-        }, true);
+        if (type === 'combo') {
+          const newBlock = { id: createId(), type: 'combo', moveIds: [], state: 'ノーマル', dmg: '', situation: '', selectionSituation: '' };
+          editorApi.current?.insertCombo(newBlock);
+          setEditingBlock(newBlock);
+        }
       };
       const handleSaveCombo = (updatedComboBlock) => {
         // Commit to React state and optimistic overlay synchronously.
@@ -1351,54 +1512,28 @@
       return (
         <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-lg overflow-hidden flex flex-col group relative">
           <div className="px-2 py-1 bg-slate-800/50 flex justify-between items-center">
-            <span className="text-[10px] text-slate-500">CARD</span>
+            <input data-card-title={card.id} type="text" value={draftTitle}
+              onChange={event => {
+                const value = event.target.value;
+                titleLatestRef.current = value;
+                setDraftTitle(value);
+                if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
+                titleTimerRef.current = setTimeout(saveCardTitle, 250);
+              }} onBlur={saveCardTitle}
+              aria-label="カードタイトル" placeholder="タイトルを入力（任意）"
+              className="min-w-0 flex-1 max-w-[80%] bg-transparent border-b border-transparent focus:border-cyan-500 outline-none text-xs md:text-sm text-white font-semibold placeholder:text-slate-500 px-1 py-1" />
             <div className="flex items-center gap-1">
               <button onClick={() => onMove(-1)} disabled={isFirst} className="p-1 text-slate-500 hover:text-cyan-400 rounded disabled:opacity-20" title="カードを上へ"><ChevronUp size={14}/></button>
               <button onClick={() => onMove(1)} disabled={isLast} className="p-1 text-slate-500 hover:text-cyan-400 rounded disabled:opacity-20" title="カードを下へ"><ChevronDown size={14}/></button>
               <button onClick={handleDeleteCard} className="p-1 text-red-400 hover:text-red-300 rounded" title="カードを削除"><Trash2 size={14}/></button>
             </div>
           </div>
-          <div className="p-3 md:p-4 space-y-4">
-            {safeBlocks.map((block, index) => {
-              const moveIds = Array.isArray(block.moveIds) ? block.moveIds : [];
-              return (
-                <div key={block.id}
-                  onDragOver={e => { if (blockDragRef.current) { e.preventDefault(); e.stopPropagation(); setOverBlockId(block.id); } }}
-                  onDrop={e => handleBlockDrop(e, block.id)}
-                  className={`relative group/block flex gap-2 rounded ${overBlockId === block.id ? 'drop-block' : ''}`}>
-                  <div draggable onDragStart={e => beginBlockDrag(e, block.id)}
-                    onDragEnd={() => { blockDragRef.current = null; setOverBlockId(null); }}
-                    className="shrink-0 flex items-center cursor-grab active:cursor-grabbing text-slate-500 hover:text-cyan-400" title="ドラッグして順番を変更">
-                    <GripVertical size={16}/>
-                  </div>
-                  <div className="flex-1 min-w-0 relative">
-                    {block.type === 'text' ? (
-                      <AutoExpandingTextarea value={block.content || ''} onChange={e => updateBlock(block.id, { content: e.target.value })} placeholder="Write your notes here..." className="w-full bg-transparent text-slate-200 border-none focus:ring-0 p-2 hover:bg-slate-800/30 focus:bg-slate-800/50 rounded transition-colors text-sm" />
-                    ) : (
-                      <div onClick={() => setEditingBlock(block)} className="p-3 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 hover:shadow-[0_0_10px_rgba(6,182,212,0.15)] transition-all">
-                        <div className="flex flex-wrap items-center gap-1.5 mb-2">
-                          {block.state && <span className={`shrink-0 rounded px-2 py-1 text-xs font-bold ${block.state === 'パニカン' ? 'bg-red-600 text-white' : block.state === 'カウンター' ? 'bg-yellow-400 text-yellow-950' : 'bg-slate-700 text-slate-100'}`}>{block.state === '通常' ? 'ノーマル' : block.state}</span>}
-                          {moveIds.length > 0 ? moveIds.map((moveId, idx) => {
-                            const move = moves.find(item => item.id === moveId) || moves.find(item => item.overrideId === moveId);
-                            if (!move) return <span key={`${moveId}-${idx}`} className="text-red-500 text-xs">Unknown Move</span>;
-                            return <React.Fragment key={`${moveId}-${idx}`}><MoveTile minimal move={move} />{idx < moveIds.length - 1 && <ChevronRight size={14} className="text-slate-500" />}</React.Fragment>;
-                          }) : <span className="text-slate-500 text-sm italic">Empty Combo</span>}
-                        </div>
-                        {block.dmg && <div className="text-xs text-white font-semibold mt-1">dmg: {block.dmg}</div>}
-                        {block.situation && <div className="text-xs text-white mt-1 truncate"><span className="opacity-80">コンボ後の状況:</span> {block.situation}</div>}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex flex-col space-y-1 opacity-0 group-hover/block:opacity-100 transition-opacity justify-center shrink-0">
-                    <button onClick={() => removeBlock(block.id)} className="p-1 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded"><X size={16} /></button>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="p-3 md:p-4">
+            <RichComboDocument blocks={safeBlocks} moves={moves} onChange={next => commitBlocks(next)}
+              onEditCombo={block => setEditingBlock(block)} editorApi={editorApi} />
           </div>
           <div className="bg-slate-950/30 p-2 border-t border-slate-800 flex justify-center space-x-2">
-            <button onClick={() => addBlock('text')} className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-md transition-colors flex items-center"><Edit2 size={12} className="mr-1.5" /> Add Text</button>
-            <button onClick={() => addBlock('combo')} className="px-3 py-1.5 text-xs font-medium text-cyan-400 hover:text-cyan-200 bg-cyan-950 hover:bg-cyan-900 rounded-md border border-cyan-800/50 transition-colors flex items-center"><Sword size={12} className="mr-1.5" /> Add Combo</button>
+            <button onMouseDown={e => e.preventDefault()} onClick={() => addBlock('combo')} className="px-3 py-1.5 text-xs font-medium text-cyan-400 hover:text-cyan-200 bg-cyan-950 hover:bg-cyan-900 rounded-md border border-cyan-800/50 transition-colors flex items-center"><Sword size={12} className="mr-1.5" /> コンボを挿入</button>
           </div>
           {editingBlock && editingBlock.type === 'combo' && <ComboBuilderModal isOpen={true} onClose={() => setEditingBlock(null)} initialData={editingBlock} onSave={handleSaveCombo} moves={moves} />}
         </div>
@@ -1412,7 +1547,8 @@
         moveIds: Array.isArray(data.moveIds) ? data.moveIds : [],
         state: data.state === '通常' ? 'ノーマル' : (data.state || 'ノーマル'),
         dmg: data.dmg ?? '',
-        situation: data.situation ?? ''
+        situation: data.situation ?? '',
+        selectionSituation: data.selectionSituation ?? ''
       });
       const [comboData, setComboData] = useState(() => normalizeCombo(initialData));
       useEffect(() => { setComboData(normalizeCombo(initialData)); }, [initialData.id]);
@@ -1435,10 +1571,10 @@
       };
 
       return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Combo Builder" maxWidth="max-w-3xl">
-          <div className="flex flex-col h-[65vh] min-h-[400px]">
+        <Modal isOpen={isOpen} onClose={onClose} title="コンボ編集" maxWidth="max-w-3xl">
+          <div className="flex flex-col h-[min(75vh,780px)] min-h-[400px]">
             <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 mb-4 shrink-0 shadow-inner">
-              <div className="text-xs text-slate-500 mb-2 uppercase tracking-wide font-semibold">Sequence Preview</div>
+              <div className="text-xs text-slate-500 mb-2 uppercase tracking-wide font-semibold">プレビュー</div>
               <div className="flex flex-wrap items-center gap-2 min-h-[40px]">
                 {comboData.moveIds.length === 0 && <span className="text-slate-600 text-sm italic">Select moves below to build combo...</span>}
                 {comboData.moveIds.map((mid, idx) => {
@@ -1469,18 +1605,22 @@
                 </div>
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 shrink-0 pt-2 border-t border-slate-800">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0 pt-2 border-t border-slate-800 max-h-[200px] overflow-y-auto">
               <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1">ヒット</label>
                 <select name="state" value={comboData.state === '通常' ? 'ノーマル' : (comboData.state || 'ノーマル')} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm focus:outline-none focus:border-cyan-500 appearance-none">{COMBO_STATES.map(s => <option key={s} value={s}>{s}</option>)}</select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">Damage (dmg)</label>
-                <input type="text" name="dmg" value={comboData.dmg || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm focus:outline-none focus:border-cyan-500" placeholder="e.g. 3500" />
+                <label className="block text-xs font-medium text-slate-400 mb-1">ダメージ（任意）</label>
+                <input type="text" name="dmg" value={comboData.dmg || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm focus:outline-none focus:border-cyan-500" placeholder="" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">コンボ後の状況</label>
-                <input type="text" name="situation" value={comboData.situation || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm focus:outline-none focus:border-cyan-500" placeholder="e.g. 画面端" />
+                <label className="block text-xs font-medium text-slate-400 mb-1">コンボ選択場面（任意）</label>
+                <input type="text" name="selectionSituation" value={comboData.selectionSituation || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm focus:outline-none focus:border-cyan-500" placeholder="ex. 立ち確認、Dゲージ3本" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">コンボ後の状況（任意）</label>
+                <input type="text" name="situation" value={comboData.situation || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm focus:outline-none focus:border-cyan-500" placeholder="ex. 2中P消費で+4F" />
               </div>
             </div>
             <div className="pt-3 mt-2 flex justify-end space-x-2 shrink-0">
