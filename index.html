@@ -35,7 +35,6 @@
     *::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.65); }
     .character-scroll { scrollbar-gutter: stable; }
     .dragging-block { opacity: .45; }
-    .drop-block { outline: 2px solid #22d3ee; outline-offset: 2px; }
   </style>
 </head>
 <body class="bg-slate-900 text-slate-200">
@@ -1045,17 +1044,6 @@
         setDeleteTarget(null);
       };
 
-      const moveCard = async (card, direction) => {
-        const index = currentCards.findIndex(item => item.id === card.id);
-        const nextIndex = index + direction;
-        if (index < 0 || nextIndex < 0 || nextIndex >= currentCards.length) return;
-        const reordered = [...currentCards];
-        [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
-        try {
-          reordered.forEach((item, order) => applyLocalWrite('cards', doc(db, 'artifacts', appId, 'users', user.uid, 'cards', item.id), { order }, 'update'));
-        } catch (err) { console.error('Card reorder failed:', err); alert(`カードの並べ替えに失敗しました: ${err.message}`); }
-      };
-
       // Keep drag payload in a ref: React state updates are asynchronous and
       // dragend can fire before the drop handler observes a state update.
       const handleDragStart = (e, type, item) => {
@@ -1129,6 +1117,45 @@
       };
 
       const currentCards = useMemo(() => allCards.filter(c => c.memoId === selectedMemoId).sort((a, b) => (a.order || 0) - (b.order || 0)), [allCards, selectedMemoId]);
+      // Only drag cards within the same selected memo; sidebar drag events are separate.
+      const draggedCardRef = useRef(null);
+      const [cardDropTarget, setCardDropTarget] = useState(null);
+      const onCardDragStart = (event, card) => {
+        // Text selection, clicking the buttons and editing a combo still work normally.
+        if (event.target.closest('input, textarea, button, [contenteditable="true"]')) {
+          event.preventDefault(); return;
+        }
+        draggedCardRef.current = { id: card.id, memoId: card.memoId };
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('application/x-sf6-card', JSON.stringify(draggedCardRef.current));
+        event.dataTransfer.setData('text/plain', card.id);
+      };
+      const onCardDragOver = (event, target) => {
+        if (!draggedCardRef.current || draggedCardRef.current.memoId !== selectedMemoId || target.memoId !== selectedMemoId) return;
+        event.preventDefault(); event.stopPropagation();
+        event.dataTransfer.dropEffect = 'move';
+        setCardDropTarget(target.id);
+      };
+      const onCardDrop = (event, target) => {
+        if (!draggedCardRef.current) return;
+        event.preventDefault(); event.stopPropagation();
+        const dragged = draggedCardRef.current;
+        draggedCardRef.current = null; setCardDropTarget(null);
+        if (dragged.memoId !== selectedMemoId || target.memoId !== selectedMemoId || dragged.id === target.id) return;
+        const reordered = [...currentCards];
+        const from = reordered.findIndex(item => item.id === dragged.id);
+        const to = reordered.findIndex(item => item.id === target.id);
+        if (from < 0 || to < 0) return;
+        const [moving] = reordered.splice(from, 1);
+        reordered.splice(to, 0, moving);
+        reordered.forEach((item, index) => {
+          if (item.order !== index) applyLocalWrite('cards',
+            doc(db, 'artifacts', appId, 'users', user.uid, 'cards', item.id),
+            { order: index }, 'update');
+        });
+      };
+      const onCardDragEnd = () => { draggedCardRef.current = null; setCardDropTarget(null); };
+
 
       const handleAddCard = () => {
         if (!selectedMemoId) return;
@@ -1137,6 +1164,7 @@
           applyLocalWrite('cards', reference, {
             memoId: selectedMemoId,
             title: '新規カード',
+            showCombo: true, showText: true,
             blocks: [{ id: createId(), type: 'combo', moveIds: [], state: 'ノーマル', dmg: '', situation: '', selectionSituation: '' }, { id: createId(), type: 'text', content: '' }],
             order: currentCards.length
           });
@@ -1187,7 +1215,13 @@
           <main className="flex-1 flex flex-col bg-slate-900 overflow-hidden relative">
             {selectedMemoId ? (
               <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-                {currentCards.map((card, index) => <CardEditor key={card.id} card={card} moves={moves} db={db} appId={appId} user={user} onMove={direction => moveCard(card, direction)} isFirst={index === 0} isLast={index === currentCards.length - 1} applyLocalWrite={applyLocalWrite} stageCard={stageCard} />)}
+                {currentCards.map(card => <CardEditor key={card.id} card={card} moves={moves} db={db} appId={appId} user={user} applyLocalWrite={applyLocalWrite} stageCard={stageCard}
+                  cardDragProps={{
+                    onDragStart: event => onCardDragStart(event, card),
+                    onDragOver: event => onCardDragOver(event, card),
+                    onDrop: event => onCardDrop(event, card),
+                    onDragEnd: onCardDragEnd
+                  }} isDragTarget={cardDropTarget === card.id} />)}
                 <button onClick={handleAddCard} className="w-full py-4 border-2 border-dashed border-slate-700 rounded-xl text-slate-500 hover:text-cyan-400 hover:border-cyan-500 hover:bg-slate-800/30 transition-all flex items-center justify-center font-medium"><Plus size={20} className="mr-2" /> Add New Card</button>
               </div>
             ) : <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">作成したメモはこちらに表示されます。</div>}
@@ -1246,10 +1280,8 @@
       return <textarea ref={ref} value={value} onChange={onChange} placeholder={placeholder} className={`${className} overflow-hidden resize-none`} rows={1} />;
     }
 
-    function CardEditor({ card, moves, db, appId, user, onMove, isFirst, isLast, applyLocalWrite, stageCard }) {
+    function CardEditor({ card, moves, db, appId, user, applyLocalWrite, stageCard, cardDragProps, isDragTarget }) {
       const [editingBlock, setEditingBlock] = useState(null);
-      const blockDragRef = useRef(null);
-      const [overBlockId, setOverBlockId] = useState(null);
       const initialBlocks = Array.isArray(card.blocks) ? card.blocks : [];
       const [blocks, setBlocks] = useState(initialBlocks);
       const blocksRef = useRef(initialBlocks);
@@ -1259,6 +1291,24 @@
       const deletedRef = useRef(false);
       const ioRef = useRef({ db, appId, user, cardId: card.id, applyLocalWrite, stageCard });
       ioRef.current = { db, appId, user, cardId: card.id, applyLocalWrite, stageCard };
+
+      const [showCombo, setShowCombo] = useState(card.showCombo !== false);
+      const [showText, setShowText] = useState(card.showText !== false);
+      const visibilityRef = useRef({ showCombo: card.showCombo !== false, showText: card.showText !== false });
+      const toggleVisibility = (field) => {
+        const next = !visibilityRef.current[field];
+        visibilityRef.current = { ...visibilityRef.current, [field]: next };
+        if (field === 'showCombo') setShowCombo(next);
+        else setShowText(next);
+        applyLocalWrite('cards', doc(db, 'artifacts', appId, 'users', user.uid, 'cards', card.id), { [field]: next }, 'update');
+      };
+      useEffect(() => {
+        const nextCombo = card.showCombo !== false;
+        const nextText = card.showText !== false;
+        visibilityRef.current = { showCombo: nextCombo, showText: nextText };
+        setShowCombo(nextCombo);
+        setShowText(nextText);
+      }, [card.id, card.showCombo, card.showText]);
 
       const titleInitial = card.title ?? '新規カード';
       const [title, setTitle] = useState(titleInitial);
@@ -1329,28 +1379,13 @@
         deletedRef.current = true;
         applyLocalWrite('cards', doc(db, 'artifacts', appId, 'users', user.uid, 'cards', card.id), null, 'delete');
       };
-      const addText = () => commitBlocks(previous => [...previous, { id: createId(), type: 'text', content: '' }], true);
-      const removeBlock = (blockId) => commitBlocks(previous => previous.filter(block => block.id !== blockId), true);
-      const beginTextDrag = (event, blockId) => {
-        blockDragRef.current = blockId;
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('application/x-sf6-block', blockId);
-      };
-      const handleTextDrop = (event, targetId) => {
-        event.preventDefault(); event.stopPropagation();
-        const sourceId = blockDragRef.current || event.dataTransfer.getData('application/x-sf6-block');
-        blockDragRef.current = null; setOverBlockId(null);
-        if (!sourceId || sourceId === targetId) return;
-        commitBlocks(previous => {
-          const texts = previous.filter(b => b.type === 'text');
-          const from = texts.findIndex(b => b.id === sourceId);
-          const to = texts.findIndex(b => b.id === targetId);
-          if (from < 0 || to < 0) return previous;
-          const [moved] = texts.splice(from, 1);
-          texts.splice(to, 0, moved);
-          return [...previous.filter(b => b.type !== 'text'), ...texts];
-        }, true);
-      };
+      // Present a single textarea while retaining all legacy text content.
+      // Legacy multi-text cards are consolidated only after the user edits the text.
+      const updateCardText = (value) => commitBlocks(previous => {
+        const first = previous.find(block => block.type === 'text');
+        const others = previous.filter(block => block.type !== 'text');
+        return [...others, { id: first?.id || createId(), type: 'text', content: value }];
+      });
       const handleSaveCombo = updated => {
         commitBlocks(previous => {
           const index = previous.findIndex(b => b.type === 'combo' && b.id === updated.id);
@@ -1367,6 +1402,7 @@
       const combo = combos[0] || null;
       const oldCombos = combos.slice(1);
       const textBlocks = safeBlocks.filter(b => b.type === 'text');
+      const fullText = textBlocks.map(b => b.content || '').join('\n\n');
       const openCombo = () => setEditingBlock(combo || { id: createId(), type: 'combo', moveIds: [], state: 'ノーマル', dmg: '', situation: '', selectionSituation: '' });
 
       const renderCombo = (block) => {
@@ -1400,7 +1436,7 @@
         oldCombos.forEach((legacy, index) => {
           const ref = doc(collection(db, 'artifacts', appId, 'users', user.uid, 'cards'));
           applyLocalWrite('cards', ref, {
-            title: '新規カード', memoId: card.memoId,
+            title: '新規カード', memoId: card.memoId, showCombo: true, showText: true,
             blocks: [legacy, { id: createId(), type: 'text', content: '' }],
             order: Number(card.order || 0) + (index + 1) * 0.001
           });
@@ -1409,7 +1445,8 @@
       };
 
       return (
-        <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-lg overflow-hidden flex flex-col group relative">
+        <div draggable="true" {...cardDragProps}
+          className={`bg-slate-900 border rounded-xl shadow-lg overflow-hidden flex flex-col group relative cursor-grab active:cursor-grabbing ${isDragTarget ? 'border-cyan-400 ring-2 ring-cyan-500/50' : 'border-slate-700'}`}>
           <div className="px-2 py-1 bg-slate-800/50 flex justify-between items-center gap-2">
             <input type="text" value={title} aria-label="カードのタイトル"
               onChange={e => {
@@ -1421,40 +1458,28 @@
               onBlur={flushTitle} placeholder="新規カード"
               className="flex-1 min-w-0 text-sm font-semibold text-slate-100 bg-transparent hover:bg-slate-700/50 focus:bg-slate-900 focus:outline-none focus:ring-1 focus:ring-cyan-600 rounded px-2 py-1" />
             <div className="flex items-center gap-1 shrink-0">
-              <button onClick={() => onMove(-1)} disabled={isFirst} className="p-1 text-slate-500 hover:text-cyan-400 rounded disabled:opacity-20" title="カードを上へ"><ChevronUp size={14}/></button>
-              <button onClick={() => onMove(1)} disabled={isLast} className="p-1 text-slate-500 hover:text-cyan-400 rounded disabled:opacity-20" title="カードを下へ"><ChevronDown size={14}/></button>
+              <button type="button" onClick={() => toggleVisibility('showCombo')} aria-pressed={showCombo}
+                className={`px-2 py-1 text-xs font-semibold rounded border transition-colors ${showCombo ? 'bg-cyan-900/70 text-cyan-200 border-cyan-700' : 'bg-slate-900 text-slate-500 border-slate-700'}`}>コンボ</button>
+              <button type="button" onClick={() => toggleVisibility('showText')} aria-pressed={showText}
+                className={`px-2 py-1 text-xs font-semibold rounded border transition-colors ${showText ? 'bg-cyan-900/70 text-cyan-200 border-cyan-700' : 'bg-slate-900 text-slate-500 border-slate-700'}`}>テキスト</button>
               <button onClick={handleDeleteCard} className="p-1 text-red-400 hover:text-red-300 rounded" title="カードを削除"><Trash2 size={14}/></button>
             </div>
           </div>
-          <div className="p-3 md:p-4 space-y-3">
-            {/* The combo stays at the top of the card. */}
-            {combo ? renderCombo(combo) :
-              <button type="button" onClick={openCombo} className="w-full p-3 text-left bg-slate-950 border border-dashed border-slate-700 rounded-lg text-slate-500 hover:border-cyan-600 text-sm">クリックでコンボを入力。</button>}
-            {oldCombos.length > 0 && <div className="rounded-md border border-amber-800/50 bg-amber-950/20 p-2 space-y-2">
-              <p className="text-xs text-amber-300">旧形式の追加コンボが{oldCombos.length}件あります。データ保護のため残しています。</p>
-              {oldCombos.map(old => <div key={old.id}>{renderCombo(old)}</div>)}
-              <button type="button" onClick={splitOldCombos} className="text-xs rounded bg-amber-900/40 hover:bg-amber-900/70 text-amber-200 px-2 py-1">別カードに分割する</button>
+          {(showCombo || showText) && <div className="p-3 md:p-4 space-y-3 cursor-default">
+            {showCombo && <>
+              {combo ? renderCombo(combo) :
+                <button type="button" onClick={openCombo} className="w-full p-3 text-left bg-slate-950 border border-dashed border-slate-700 rounded-lg text-slate-500 hover:border-cyan-600 text-sm">クリックでコンボを入力。</button>}
+              {oldCombos.length > 0 && <div className="rounded-md border border-amber-800/50 bg-amber-950/20 p-2 space-y-2">
+                <p className="text-xs text-amber-300">旧形式の追加コンボが{oldCombos.length}件あります。データ保護のため残しています。</p>
+                {oldCombos.map(old => <div key={old.id}>{renderCombo(old)}</div>)}
+                <button type="button" onClick={splitOldCombos} className="text-xs rounded bg-amber-900/40 hover:bg-amber-900/70 text-amber-200 px-2 py-1">別カードに分割する</button>
+              </div>}
+            </>}
+            {showText && <div className="min-w-0 rounded bg-slate-950/40">
+              <AutoExpandingTextarea value={fullText} onChange={e => updateCardText(e.target.value)}
+                placeholder="Write your notes here..." className="w-full bg-transparent text-slate-200 border-none focus:ring-0 p-2 hover:bg-slate-800/30 focus:bg-slate-800/50 rounded transition-colors text-sm" />
             </div>}
-            {/* Only text blocks are reorderable; combo is fixed above. */}
-            {textBlocks.map(block => <div key={block.id}
-              onDragOver={e => { if (blockDragRef.current) { e.preventDefault(); e.stopPropagation(); setOverBlockId(block.id); } }}
-              onDrop={e => handleTextDrop(e, block.id)}
-              className={`relative group/block flex items-center gap-2 rounded ${overBlockId === block.id ? 'drop-block' : ''}`}>
-              <div draggable onDragStart={e => beginTextDrag(e, block.id)}
-                onDragEnd={() => { blockDragRef.current = null; setOverBlockId(null); }}
-                className="shrink-0 flex items-center cursor-grab active:cursor-grabbing text-slate-500 hover:text-cyan-400" title="ドラッグして文章の順番を変更"><GripVertical size={16}/></div>
-              <div className="min-w-0 flex-1">
-                <AutoExpandingTextarea value={block.content || ''} onChange={e => updateBlock(block.id, { content: e.target.value })}
-                  placeholder="Write your notes here..." className="w-full bg-transparent text-slate-200 border-none focus:ring-0 p-2 hover:bg-slate-800/30 focus:bg-slate-800/50 rounded transition-colors text-sm" />
-              </div>
-              <button type="button" onClick={() => removeBlock(block.id)} title="文章を削除"
-                className="shrink-0 p-1 text-slate-500 hover:text-red-400 rounded opacity-40 group-hover/block:opacity-100"><X size={16}/></button>
-            </div>)}
-          </div>
-          <div className="bg-slate-950/30 p-2 border-t border-slate-800 flex justify-center space-x-2">
-            <button onClick={addText} className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-md flex items-center"><Edit2 size={12} className="mr-1.5" /> Add Text</button>
-            <button onClick={openCombo} className="px-3 py-1.5 text-xs font-medium text-cyan-400 hover:text-cyan-200 bg-cyan-950 hover:bg-cyan-900 rounded-md border border-cyan-800/50 flex items-center"><Sword size={12} className="mr-1.5" /> コンボ編集</button>
-          </div>
+          </div>}
           {editingBlock && <ComboBuilderModal isOpen={true} onClose={() => setEditingBlock(null)} initialData={editingBlock} onSave={handleSaveCombo} moves={moves} />}
         </div>
       );
