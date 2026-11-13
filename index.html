@@ -1253,78 +1253,206 @@
         rows={1} {...rest} />;
     }
 
-    // One editable text field per card. Combo tiles occupy full-width rows
-    // within the same visual editor container and cannot interfere with typing.
-    // Legacy text fragments are joined without discarding their contents.
+    // A single rich-text editing surface per card. Combo rows are atomic,
+    // non-editable elements inside it, while regular text remains editable.
+    // The saved Firestore format remains the legacy ordered blocks array.
     function normalizeCardBlocks(rawBlocks) {
       const source = Array.isArray(rawBlocks) ? rawBlocks : [];
-      const firstText = source.find(block => block.type === 'text');
-      const text = source.filter(block => block.type === 'text')
-        .map(block => String(block.content ?? '')).filter(Boolean).join('\n');
-      return [
-        { id: firstText?.id || 'card_text', type: 'text', content: text },
-        ...source.filter(block => block.type === 'combo')
-      ];
+      const kept = source.filter(block => block && (block.type === 'text' || block.type === 'combo'));
+      return kept.length ? kept : [{ id: createId(), type: 'text', content: '' }];
     }
 
     function RichComboDocument({ blocks, moves, onChange, onEditCombo, editorApi }) {
-      const normalized = useMemo(() => normalizeCardBlocks(blocks), [blocks]);
-      const textBlock = normalized[0];
-      const comboBlocks = normalized.slice(1);
-      const callbacksRef = useRef({ onChange, onEditCombo });
-      callbacksRef.current = { onChange, onEditCombo };
-      const normalizedRef = useRef(normalized);
-      normalizedRef.current = normalized;
+      const editorRef = useRef(null);
+      const blocksRef = useRef(blocks);
+      const actionsRef = useRef({ onChange, onEditCombo, moves });
+      const savedSelectionRef = useRef(null);
+      const ownInputJsonRef = useRef(null);
+      blocksRef.current = blocks;
+      actionsRef.current = { onChange, onEditCombo, moves };
 
-      // Insert a combo row inside the card's shared editor frame.
-      // Text remains one independently editable field; no card-internal DnD.
-      editorApi.current = {
-        insertCombo: combo => callbacksRef.current.onChange([...normalizedRef.current, combo])
+      const makeComboElement = (block) => {
+        const outer = document.createElement('div');
+        outer.dataset.comboId = block.id;
+        outer.contentEditable = 'false';
+        outer.draggable = false;
+        outer.setAttribute('role', 'button');
+        outer.setAttribute('tabindex', '0');
+        outer.setAttribute('aria-label', 'コンボを編集');
+        outer.title = 'クリックでコンボを編集';
+        outer.className = 'sf6-combo-row block w-full min-w-0 text-left p-3 my-2 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 hover:shadow-[0_0_10px_rgba(6,182,212,0.15)] transition-all';
+        const line = document.createElement('div');
+        line.className = 'flex flex-wrap items-center gap-1.5';
+        outer.appendChild(line);
+        const part = (parent, text, css) => {
+          const element = document.createElement('span');
+          element.className = css;
+          element.textContent = text;
+          parent.appendChild(element);
+        };
+        const state = block.state === '通常' ? 'ノーマル' : (block.state || 'ノーマル');
+        if (state === 'カウンター') part(line, 'カウンター', 'shrink-0 rounded px-2 py-1 text-xs font-bold bg-yellow-400 text-yellow-950');
+        if (state === 'パニカン') part(line, 'パニカン', 'shrink-0 rounded px-2 py-1 text-xs font-bold bg-red-600 text-white');
+        const ids = Array.isArray(block.moveIds) ? block.moveIds : [];
+        if (!ids.length) part(line, 'クリックでコンボを入力。', 'text-slate-500 text-sm italic');
+        ids.forEach((id, index) => {
+          const move = actionsRef.current.moves.find(item => item.id === id || item.overrideId === id);
+          if (index) part(line, '›', 'text-slate-500 shrink-0 text-sm');
+          const tone = move?.category === 'SA' || /^(?:SA[123]?|CA)$/i.test(String(move?.name || ''))
+            ? 'bg-purple-300 text-purple-950 border-purple-400'
+            : (STRENGTH_COLORS[move?.strength] || STRENGTH_COLORS['その他']);
+          part(line, move?.name || 'Unknown Move', `px-2 py-1 rounded text-xs font-bold border shadow-sm ${tone}`);
+        });
+        if (block.dmg) part(line, `dmg: ${block.dmg}`, 'text-xs text-white font-semibold ml-1');
+        if (block.situation || block.selectionSituation) {
+          const details = document.createElement('div');
+          details.className = 'text-xs text-white mt-2 break-words';
+          if (block.situation) part(details, `コンボ後の状況: ${block.situation}`, 'mr-3');
+          if (block.selectionSituation) part(details, `選択場面: ${block.selectionSituation}`, '');
+          outer.appendChild(details);
+        }
+        return outer;
       };
 
+      const renderEditor = () => {
+        const root = editorRef.current;
+        if (!root) return;
+        const fragment = document.createDocumentFragment();
+        const makeEmptyText = () => {
+          const element = document.createElement('div');
+          element.dataset.textSegment = createId();
+          element.className = 'sf6-text-segment min-h-[1.5em] whitespace-pre-wrap break-words';
+          return element;
+        };
+        for (const [index, block] of blocksRef.current.entries()) {
+          if (block.type === 'combo') {
+            if (index === 0) fragment.appendChild(makeEmptyText());
+            fragment.appendChild(makeComboElement(block));
+            if (index === blocksRef.current.length - 1 || blocksRef.current[index + 1]?.type === 'combo') fragment.appendChild(makeEmptyText());
+          } else if (block.type === 'text') {
+            const element = document.createElement('div');
+            element.dataset.textSegment = block.id || createId();
+            element.className = 'sf6-text-segment min-h-[1.5em] whitespace-pre-wrap break-words';
+            element.textContent = String(block.content ?? '');
+            fragment.appendChild(element);
+          }
+        }
+        if (!fragment.childNodes.length) {
+          const empty = document.createElement('div'); empty.dataset.textSegment = createId();
+          empty.className = 'sf6-text-segment min-h-[1.5em]';
+          fragment.appendChild(empty);
+        }
+        root.replaceChildren(fragment);
+      };
+
+      const extractEditor = () => {
+        const root = editorRef.current;
+        if (!root) return blocksRef.current;
+        const combos = new Map(blocksRef.current.filter(b => b.type === 'combo').map(b => [b.id, b]));
+        const textIds = blocksRef.current.filter(b => b.type === 'text').map(b => b.id);
+        const next = [];
+        let buffer = '';
+        const flushText = force => {
+          if (buffer || force) next.push({ id: textIds.shift() || createId(), type: 'text', content: buffer });
+          buffer = '';
+        };
+        const walk = (node) => {
+          if (node.nodeType === Node.TEXT_NODE) { buffer += node.nodeValue || ''; return; }
+          if (node.nodeType !== Node.ELEMENT_NODE) return;
+          if (node.dataset?.comboId && combos.has(node.dataset.comboId)) {
+            if (buffer) flushText(false);
+            next.push(combos.get(node.dataset.comboId));
+            return;
+          }
+          if (node.tagName === 'BR') { buffer += '\n'; return; }
+          if (node.dataset?.textSegment) {
+            // The next two lines allow combo nodes inserted inside a segment
+            // to split the surrounding text without losing either half.
+            Array.from(node.childNodes).forEach(walk);
+            if (buffer) flushText(false);
+            return;
+          }
+          const blockElement = ['DIV', 'P'].includes(node.tagName);
+          if (blockElement && buffer && !buffer.endsWith('\n')) buffer += '\n';
+          Array.from(node.childNodes).forEach(walk);
+        };
+        Array.from(root.childNodes).forEach(walk);
+        if (buffer) flushText(false);
+        return next.length ? next : [{ id: textIds.shift() || createId(), type: 'text', content: '' }];
+      };
+
+      const emitChange = () => {
+        const next = extractEditor();
+        blocksRef.current = next;
+        ownInputJsonRef.current = JSON.stringify(next);
+        actionsRef.current.onChange(next);
+      };
+      const rememberSelection = () => {
+        const root = editorRef.current;
+        const selection = window.getSelection();
+        if (!root || !selection?.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        if (root.contains(range.commonAncestorContainer)) savedSelectionRef.current = range.cloneRange();
+      };
+      const insertCombo = combo => {
+        const root = editorRef.current;
+        if (!root) return;
+        const range = document.createRange();
+        const remembered = savedSelectionRef.current;
+        if (remembered && root.contains(remembered.commonAncestorContainer)) {
+          range.setStart(remembered.startContainer, remembered.startOffset);
+          range.collapse(true);
+        } else {
+          range.selectNodeContents(root);
+          range.collapse(false);
+        }
+        const node = makeComboElement(combo);
+        range.insertNode(node);
+        // Prevent insertion from replacing an existing combo in extraction.
+        blocksRef.current = [...blocksRef.current, combo];
+        const after = document.createElement('div');
+        after.dataset.textSegment = createId();
+        after.className = 'sf6-text-segment min-h-[1.5em] whitespace-pre-wrap break-words';
+        node.after(after);
+        emitChange();
+        const newRange = document.createRange();
+        newRange.selectNodeContents(after);
+        newRange.collapse(true);
+        savedSelectionRef.current = newRange.cloneRange();
+      };
+      if (editorApi) editorApi.current = { insertCombo };
+
+      useEffect(() => { renderEditor(); }, []);
+      const currentJson = JSON.stringify(blocks);
+      useEffect(() => {
+        if (ownInputJsonRef.current === currentJson) {
+          ownInputJsonRef.current = null;
+          return;
+        }
+        renderEditor();
+      }, [currentJson]);
+
+      const handleComboClick = event => {
+        const element = event.target.closest?.('[data-combo-id]');
+        if (!element || !editorRef.current?.contains(element)) return;
+        const combo = blocksRef.current.find(b => b.type === 'combo' && b.id === element.dataset.comboId);
+        if (combo) actionsRef.current.onEditCombo(combo);
+      };
       return (
-        <div className="rich-combo-document min-h-[90px] w-full rounded-md bg-slate-950/30 border border-slate-800 p-2 space-y-2"
-             aria-label="カードの文章とコンボ">
-          <AutoExpandingTextarea
-            value={textBlock.content || ''}
-            onChange={event => {
-              const content = event.target.value;
-              callbacksRef.current.onChange(normalizedRef.current.map((block, index) => index === 0 ? { ...block, content } : block));
+        <div className="rich-combo-document rounded-md bg-slate-950/30 border border-slate-800 p-2">
+          <div ref={editorRef} contentEditable suppressContentEditableWarning spellCheck
+            role="textbox" aria-label="カードのテキストとコンボ" aria-multiline="true"
+            data-placeholder="文章を入力。カーソル位置にコンボを挿入できます。"
+            className="rich-combo-editor min-h-[90px] w-full p-2 rounded text-sm leading-7 text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-700 break-words"
+            onInput={emitChange} onKeyUp={rememberSelection} onMouseUp={rememberSelection}
+            onBlur={rememberSelection} onClick={handleComboClick}
+            onKeyDown={event => {
+              const combo = event.target.closest?.('[data-combo-id]');
+              if (combo && (event.key === 'Enter' || event.key === ' ')) {
+                event.preventDefault(); handleComboClick(event);
+              }
             }}
-            placeholder="文章を入力..."
-            aria-label="カードのテキスト"
-            className="block w-full bg-transparent text-slate-200 border-none focus:ring-0 p-2 hover:bg-slate-800/30 focus:bg-slate-800/50 rounded transition-colors text-sm whitespace-pre-wrap"
           />
-          {comboBlocks.map((block) => {
-            const moveIds = Array.isArray(block.moveIds) ? block.moveIds : [];
-            const state = block.state === '通常' ? 'ノーマル' : (block.state || 'ノーマル');
-            return (
-              <div key={block.id} className="group/line w-full min-w-0">
-                <button type="button" onClick={() => callbacksRef.current.onEditCombo(block)}
-                  title="クリックでコンボを編集"
-                  className="block w-full min-w-0 text-left p-3 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 hover:shadow-[0_0_10px_rgba(6,182,212,0.15)] transition-all">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {state === 'カウンター' && <span className="shrink-0 rounded px-2 py-1 text-xs font-bold bg-yellow-400 text-yellow-950">カウンター</span>}
-                    {state === 'パニカン' && <span className="shrink-0 rounded px-2 py-1 text-xs font-bold bg-red-600 text-white">パニカン</span>}
-                    {moveIds.length > 0 ? moveIds.map((moveId, index) => {
-                      const move = moves.find(item => item.id === moveId || item.overrideId === moveId);
-                      return <React.Fragment key={`${moveId}-${index}`}>
-                        {index > 0 && <ChevronRight size={14} className="text-slate-500 shrink-0" />}
-                        {move ? <MoveTile minimal move={move} /> : <span className="text-red-400 text-xs">Unknown Move</span>}
-                      </React.Fragment>;
-                    }) : <span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span>}
-                    {block.dmg && <span className="text-xs text-white font-semibold ml-1">dmg: {block.dmg}</span>}
-                  </div>
-                  {(block.situation || block.selectionSituation) && (
-                    <div className="text-xs text-white mt-2 break-words">
-                      {block.situation && <span className="mr-3"><span className="opacity-80">コンボ後の状況:</span> {block.situation}</span>}
-                      {block.selectionSituation && <span><span className="opacity-80">選択場面:</span> {block.selectionSituation}</span>}
-                    </div>
-                  )}
-                </button>
-              </div>
-            );
-          })}
         </div>
       );
     }
