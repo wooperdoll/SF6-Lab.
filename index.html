@@ -1253,138 +1253,75 @@
         rows={1} {...rest} />;
     }
 
-    // A single flowing card document with independent text input rows and
-    // full-width combo rows. Keeping each combo outside the editable text
-    // prevents the browser from moving/removing combo DOM while typing.
-    // The existing Firestore blocks format is unchanged.
+    // One editable text field per card. Combo tiles occupy full-width rows
+    // within the same visual editor container and cannot interfere with typing.
+    // Legacy text fragments are joined without discarding their contents.
+    function normalizeCardBlocks(rawBlocks) {
+      const source = Array.isArray(rawBlocks) ? rawBlocks : [];
+      const firstText = source.find(block => block.type === 'text');
+      const text = source.filter(block => block.type === 'text')
+        .map(block => String(block.content ?? '')).filter(Boolean).join('\n');
+      return [
+        { id: firstText?.id || 'card_text', type: 'text', content: text },
+        ...source.filter(block => block.type === 'combo')
+      ];
+    }
+
     function RichComboDocument({ blocks, moves, onChange, onEditCombo, editorApi }) {
-      const cursorRef = useRef(null);
-      const dragRef = useRef(null);
-      const textAreaRefs = useRef({});
-      const blocksRef = useRef(blocks);
-      blocksRef.current = blocks;
+      const normalized = useMemo(() => normalizeCardBlocks(blocks), [blocks]);
+      const textBlock = normalized[0];
+      const comboBlocks = normalized.slice(1);
       const callbacksRef = useRef({ onChange, onEditCombo });
       callbacksRef.current = { onChange, onEditCombo };
+      const normalizedRef = useRef(normalized);
+      normalizedRef.current = normalized;
 
-      const rememberCursor = (block, event) => {
-        cursorRef.current = {
-          id: block.id,
-          start: event.currentTarget.selectionStart ?? (block.content || '').length,
-          end: event.currentTarget.selectionEnd ?? (block.content || '').length
-        };
-      };
-
-      const insertCombo = combo => {
-        const current = blocksRef.current;
-        const cursor = cursorRef.current;
-        const index = cursor ? current.findIndex(b => b.id === cursor.id && b.type === 'text') : -1;
-        let next;
-        let focusId;
-        if (index >= 0) {
-          const original = current[index];
-          const text = original.content || '';
-          const begin = Math.max(0, Math.min(cursor.start, text.length));
-          const end = Math.max(begin, Math.min(cursor.end, text.length));
-          const following = { id: createId(), type: 'text', content: text.slice(end) };
-          focusId = following.id;
-          next = [
-            ...current.slice(0, index),
-            { ...original, content: text.slice(0, begin) },
-            combo, following,
-            ...current.slice(index + 1)
-          ];
-        } else {
-          const following = { id: createId(), type: 'text', content: '' };
-          focusId = following.id;
-          next = [...current, combo, following];
-        }
-        cursorRef.current = { id: focusId, start: 0, end: 0 };
-        callbacksRef.current.onChange(next);
-      };
-      editorApi.current = { insertCombo };
-
-      const reorderBlock = (sourceId, targetId) => {
-        if (!sourceId || sourceId === targetId) return;
-        const next = [...blocksRef.current];
-        const from = next.findIndex(b => b.id === sourceId);
-        const to = next.findIndex(b => b.id === targetId);
-        if (from < 0 || to < 0) return;
-        const [item] = next.splice(from, 1);
-        next.splice(next.findIndex(b => b.id === targetId), 0, item);
-        callbacksRef.current.onChange(next);
+      // Insert a combo row inside the card's shared editor frame.
+      // Text remains one independently editable field; no card-internal DnD.
+      editorApi.current = {
+        insertCombo: combo => callbacksRef.current.onChange([...normalizedRef.current, combo])
       };
 
       return (
-        <div className="rich-combo-document min-h-[90px] w-full rounded-md bg-slate-950/30 border border-slate-800 p-2 space-y-1"
+        <div className="rich-combo-document min-h-[90px] w-full rounded-md bg-slate-950/30 border border-slate-800 p-2 space-y-2"
              aria-label="カードの文章とコンボ">
-          {blocks.length === 0 && <p className="p-2 text-sm text-slate-500">文章やコンボを入力できます。</p>}
-          {blocks.map((block) => {
+          <AutoExpandingTextarea
+            value={textBlock.content || ''}
+            onChange={event => {
+              const content = event.target.value;
+              callbacksRef.current.onChange(normalizedRef.current.map((block, index) => index === 0 ? { ...block, content } : block));
+            }}
+            placeholder="文章を入力..."
+            aria-label="カードのテキスト"
+            className="block w-full bg-transparent text-slate-200 border-none focus:ring-0 p-2 hover:bg-slate-800/30 focus:bg-slate-800/50 rounded transition-colors text-sm whitespace-pre-wrap"
+          />
+          {comboBlocks.map((block) => {
             const moveIds = Array.isArray(block.moveIds) ? block.moveIds : [];
-            const isCombo = block.type === 'combo';
             const state = block.state === '通常' ? 'ノーマル' : (block.state || 'ノーマル');
             return (
-              <div key={block.id} className="group/line relative flex items-start gap-1.5 w-full min-w-0"
-                onDragOver={event => {
-                  if (dragRef.current && dragRef.current !== block.id) {
-                    event.preventDefault(); event.dataTransfer.dropEffect = 'move';
-                  }
-                }}
-                onDrop={event => {
-                  if (!dragRef.current) return;
-                  event.preventDefault(); event.stopPropagation();
-                  const sourceId = dragRef.current;
-                  dragRef.current = null;
-                  reorderBlock(sourceId, block.id);
-                }}>
-                <span draggable
-                  onDragStart={event => {
-                    dragRef.current = block.id;
-                    event.dataTransfer.effectAllowed = 'move';
-                    event.dataTransfer.setData('text/plain', block.id);
-                  }}
-                  onDragEnd={() => { dragRef.current = null; }}
-                  title="ドラッグして文章・コンボの順番を変更"
-                  className="shrink-0 mt-2 text-slate-600 hover:text-cyan-400 cursor-grab active:cursor-grabbing select-none">
-                  <GripVertical size={15} />
-                </span>
-                {isCombo ? (
-                  <button type="button" onClick={() => callbacksRef.current.onEditCombo(block)}
-                    title="クリックでコンボを編集"
-                    className="block w-full min-w-0 text-left p-3 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 hover:shadow-[0_0_10px_rgba(6,182,212,0.15)] transition-all">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {state === 'カウンター' && <span className="shrink-0 rounded px-2 py-1 text-xs font-bold bg-yellow-400 text-yellow-950">カウンター</span>}
-                      {state === 'パニカン' && <span className="shrink-0 rounded px-2 py-1 text-xs font-bold bg-red-600 text-white">パニカン</span>}
-                      {moveIds.length > 0 ? moveIds.map((moveId, index) => {
-                        const move = moves.find(item => item.id === moveId || item.overrideId === moveId);
-                        return <React.Fragment key={`${moveId}-${index}`}>
-                          {index > 0 && <ChevronRight size={14} className="text-slate-500 shrink-0" />}
-                          {move ? <MoveTile minimal move={move} /> : <span className="text-red-400 text-xs">Unknown Move</span>}
-                        </React.Fragment>;
-                      }) : <span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span>}
-                      {block.dmg && <span className="text-xs text-white font-semibold ml-1">dmg: {block.dmg}</span>}
+              <div key={block.id} className="group/line w-full min-w-0">
+                <button type="button" onClick={() => callbacksRef.current.onEditCombo(block)}
+                  title="クリックでコンボを編集"
+                  className="block w-full min-w-0 text-left p-3 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 hover:shadow-[0_0_10px_rgba(6,182,212,0.15)] transition-all">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {state === 'カウンター' && <span className="shrink-0 rounded px-2 py-1 text-xs font-bold bg-yellow-400 text-yellow-950">カウンター</span>}
+                    {state === 'パニカン' && <span className="shrink-0 rounded px-2 py-1 text-xs font-bold bg-red-600 text-white">パニカン</span>}
+                    {moveIds.length > 0 ? moveIds.map((moveId, index) => {
+                      const move = moves.find(item => item.id === moveId || item.overrideId === moveId);
+                      return <React.Fragment key={`${moveId}-${index}`}>
+                        {index > 0 && <ChevronRight size={14} className="text-slate-500 shrink-0" />}
+                        {move ? <MoveTile minimal move={move} /> : <span className="text-red-400 text-xs">Unknown Move</span>}
+                      </React.Fragment>;
+                    }) : <span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span>}
+                    {block.dmg && <span className="text-xs text-white font-semibold ml-1">dmg: {block.dmg}</span>}
+                  </div>
+                  {(block.situation || block.selectionSituation) && (
+                    <div className="text-xs text-white mt-2 break-words">
+                      {block.situation && <span className="mr-3"><span className="opacity-80">コンボ後の状況:</span> {block.situation}</span>}
+                      {block.selectionSituation && <span><span className="opacity-80">選択場面:</span> {block.selectionSituation}</span>}
                     </div>
-                    {(block.situation || block.selectionSituation) && (
-                      <div className="text-xs text-white mt-2 break-words">
-                        {block.situation && <span className="mr-3"><span className="opacity-80">コンボ後の状況:</span> {block.situation}</span>}
-                        {block.selectionSituation && <span><span className="opacity-80">選択場面:</span> {block.selectionSituation}</span>}
-                      </div>
-                    )}
-                  </button>
-                ) : (
-                  <AutoExpandingTextarea
-                    value={block.content || ''}
-                    onChange={event => {
-                      const value = event.target.value;
-                      callbacksRef.current.onChange(blocksRef.current.map(item => item.id === block.id ? { ...item, content: value } : item));
-                      rememberCursor(block, event);
-                    }}
-                    onClick={event => rememberCursor(block, event)}
-                    onKeyUp={event => rememberCursor(block, event)}
-                    onSelect={event => rememberCursor(block, event)}
-                    placeholder="文章を入力..."
-                    className="w-full min-w-0 bg-transparent text-slate-200 border-none focus:ring-0 p-2 hover:bg-slate-800/30 focus:bg-slate-800/50 rounded transition-colors text-sm whitespace-pre-wrap"
-                  />
-                )}
+                  )}
+                </button>
               </div>
             );
           })}
@@ -1394,7 +1331,7 @@
 
     function CardEditor({ card, moves, db, appId, user, onMove, isFirst, isLast, applyLocalWrite, stageCard }) {
       const [editingBlock, setEditingBlock] = useState(null);
-      const initialBlocks = Array.isArray(card.blocks) ? card.blocks : [];
+      const initialBlocks = normalizeCardBlocks(card.blocks);
       const [blocks, setBlocks] = useState(initialBlocks);
       const blocksRef = useRef(initialBlocks);
       const saveTimerRef = useRef(null);
@@ -1430,11 +1367,11 @@
       };
       const updateBlock = (blockId, patch, immediate = false) =>
         commitBlocks(previous => previous.map(block => block.id === blockId ? { ...block, ...patch } : block), immediate);
-      const incomingJson = JSON.stringify(Array.isArray(card.blocks) ? card.blocks : []);
+      const incomingJson = JSON.stringify(normalizeCardBlocks(card.blocks));
       useEffect(() => {
         if (incomingJson === latestJsonRef.current) return;
         if (latestJsonRef.current === savedJsonRef.current) {
-          const incoming = Array.isArray(card.blocks) ? card.blocks : [];
+          const incoming = normalizeCardBlocks(card.blocks);
           blocksRef.current = incoming;
           latestJsonRef.current = incomingJson;
           savedJsonRef.current = incomingJson;
