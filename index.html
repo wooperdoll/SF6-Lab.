@@ -1416,7 +1416,7 @@
               const move = moves.find(item => item.id === moveId) || moves.find(item => item.overrideId === moveId);
               return <React.Fragment key={`${moveId}-${idx}`}>
                 {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
-                {idx < moveIds.length - 1 && <ChevronRight size={14} className="text-slate-500" />}
+                {idx < moveIds.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' && <ChevronRight size={14} className="text-slate-500" />}
               </React.Fragment>;
             }) : <span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span>}
             {block.dmg !== '' && block.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({block.dmg} dmg)</span>}
