@@ -1573,6 +1573,11 @@
               aria-label="カードタイトル" placeholder="タイトルを入力（任意）"
               className="min-w-0 flex-1 max-w-[80%] bg-transparent border-b border-transparent focus:border-cyan-500 outline-none text-xs md:text-sm text-white font-semibold placeholder:text-slate-500 px-1 py-1" />
             <div className="flex items-center gap-1">
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => addBlock('combo')}
+                className="inline-flex items-center gap-1 rounded border border-cyan-800/50 bg-cyan-950 px-1.5 py-1 text-[10px] font-medium text-cyan-400 hover:bg-cyan-900 hover:text-cyan-200 transition-colors"
+                title="カーソル位置にコンボを挿入" aria-label="コンボを挿入">
+                <Sword size={12} /> <span className="hidden sm:inline">コンボを挿入</span>
+              </button>
               <button onClick={() => onMove(-1)} disabled={isFirst} className="p-1 text-slate-500 hover:text-cyan-400 rounded disabled:opacity-20" title="カードを上へ"><ChevronUp size={14}/></button>
               <button onClick={() => onMove(1)} disabled={isLast} className="p-1 text-slate-500 hover:text-cyan-400 rounded disabled:opacity-20" title="カードを下へ"><ChevronDown size={14}/></button>
               <button onClick={handleDeleteCard} className="p-1 text-red-400 hover:text-red-300 rounded" title="カードを削除"><Trash2 size={14}/></button>
@@ -1581,9 +1586,6 @@
           <div className="p-3 md:p-4">
             <RichComboDocument blocks={safeBlocks} moves={moves} onChange={next => commitBlocks(next)}
               onEditCombo={block => setEditingBlock(block)} editorApi={editorApi} />
-          </div>
-          <div className="bg-slate-950/30 p-2 border-t border-slate-800 flex justify-center space-x-2">
-            <button onMouseDown={e => e.preventDefault()} onClick={() => addBlock('combo')} className="px-3 py-1.5 text-xs font-medium text-cyan-400 hover:text-cyan-200 bg-cyan-950 hover:bg-cyan-900 rounded-md border border-cyan-800/50 transition-colors flex items-center"><Sword size={12} className="mr-1.5" /> コンボを挿入</button>
           </div>
           {editingBlock && editingBlock.type === 'combo' && <ComboBuilderModal isOpen={true} onClose={() => setEditingBlock(null)} initialData={editingBlock} onSave={handleSaveCombo} moves={moves} />}
         </div>
