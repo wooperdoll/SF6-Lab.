@@ -588,12 +588,12 @@
           <div className="flex flex-1 overflow-hidden">
             <aside className="w-24 md:w-48 flex-none min-h-0 bg-slate-950 border-r border-slate-800 flex flex-col overflow-hidden">
               <div className="h-11 px-3 border-b border-slate-800 bg-slate-950/90 backdrop-blur z-10 hidden md:flex items-center">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Characters</span>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">キャラクター</span>
               </div>
               {visiblePinned.length > 0 && (
                 <div className="shrink-0 border-b border-slate-800 bg-slate-950/90">
                   <div className="flex items-center gap-1 px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-cyan-400">
-                    <Pin size={11} /> <span className="hidden md:inline">Pinned</span>
+                    
                   </div>
                   <div className="character-scroll max-h-[38vh] overflow-y-auto overflow-x-hidden px-2 pb-2 pr-1 space-y-1">
                     {visiblePinned.map(renderCharacterButton)}
@@ -808,7 +808,7 @@
                 className="flex flex-col items-center justify-center min-h-[100px] rounded-xl border-2 border-dashed border-slate-700 hover:border-cyan-500 hover:bg-slate-800/50 transition-all text-slate-500 hover:text-cyan-400 cursor-pointer"
               >
                 <Plus size={24} className="mb-1" />
-                <span className="text-sm font-medium">Add Move</span>
+                <span className="text-sm font-medium">新規カードを追加</span>
               </button>
             </div>
           </div>
@@ -871,16 +871,16 @@
       const isCustomOrOverride = Boolean(formData.id && !formData.isDefault);
 
       return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Edit Move">
+        <Modal isOpen={isOpen} onClose={onClose} title="技編集">
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">Name</label>
+                <label className="block text-xs font-medium text-slate-400 mb-1">技名</label>
                 <input type="text" name="name" value={formData.name || ''} onChange={handleChange}
                   className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-white focus:outline-none focus:border-cyan-500" placeholder="技名" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">Command</label>
+                <label className="block text-xs font-medium text-slate-400 mb-1">コマンド</label>
                 <input type="text" name="command" value={formData.command || ''} onChange={handleChange}
                   className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-white focus:outline-none focus:border-cyan-500" placeholder="コマンド" />
               </div>
@@ -888,7 +888,7 @@
 
             {MOVE_NAME_CATEGORIES.includes(formData.category || move.category) && (
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">技名（別名・正式名称）</label>
+                <label className="block text-xs font-medium text-slate-400 mb-1">正式名称</label>
                 <input type="text" name="moveName" value={formData.moveName || ''} onChange={handleChange}
                   className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-white focus:outline-none focus:border-cyan-500"
                   placeholder="カードに追加表示する技名（任意）" />
@@ -896,7 +896,7 @@
             )}
 
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-2">Strength</label>
+              <label className="block text-xs font-medium text-slate-400 mb-2">技強度</label>
               <div className="grid grid-cols-5 gap-2">
                 {STRENGTHS.map(strength => (
                   <button type="button" key={strength} onClick={() => setFormData(prev => ({ ...prev, strength }))}
@@ -938,9 +938,9 @@
                 <button onClick={() => onDelete(formData.id)} className="text-red-400 hover:text-red-300 flex items-center text-sm px-2 py-1 rounded hover:bg-red-950/30 transition-colors"><Trash2 size={16} className="mr-1" /> Delete</button>
               ) : <div />}
               <div className="flex space-x-2">
-                <button onClick={onClose} className="px-4 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">Cancel</button>
+                <button onClick={onClose} className="px-4 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">キャンセル</button>
                 <button onClick={submitMove} disabled={!formData.name?.trim() || isSaving}
-                  className="flex items-center px-4 py-2 rounded-md text-sm font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-colors shadow-lg shadow-cyan-900/20 disabled:opacity-50"><Save size={16} className="mr-2" /> {isSaving ? 'Saving...' : 'Save'}</button>
+                  className="flex items-center px-4 py-2 rounded-md text-sm font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-colors shadow-lg shadow-cyan-900/20 disabled:opacity-50"><Save size={16} className="mr-2" /> {isSaving ? '保存中...' : '保存'}</button>
               </div>
             </div>
           </div>
