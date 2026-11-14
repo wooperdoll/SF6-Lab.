@@ -1410,40 +1410,60 @@
         const moveIds = Array.isArray(block.moveIds) ? block.moveIds : [];
         const branches = Array.isArray(block.branches) ? block.branches : [];
         const getMove = id => moves.find(item => item.id === id || item.overrideId === id);
-        const route = (ids, { faded = false } = {}) => ids.map((moveId, idx) => {
+        // The branch stores only the moves AFTER the fork. Never repeat the shared prefix.
+        const route = ids => ids.map((moveId, idx) => {
           const move = getMove(moveId);
           return <React.Fragment key={`${moveId}-${idx}`}>
-            <span className={faded ? 'opacity-55' : ''}>{move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}</span>
-            {idx < ids.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' && <ChevronRight size={14} className="text-slate-500" />}
+            {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
+            {idx < ids.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' && <ChevronRight size={14} className="text-slate-500 shrink-0" />}
           </React.Fragment>;
         });
+        const stateLabel = (block.state === 'カウンター' || block.state === 'パニカン') &&
+          <span className={`shrink-0 rounded px-2 py-1 text-xs font-bold ${block.state === 'パニカン' ? 'bg-red-600 text-white' : 'bg-yellow-400 text-yellow-950'}`}>{block.state}</span>;
         return <div onClick={() => setEditingBlock(block)} className="p-3 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 transition-all">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {(block.state === 'カウンター' || block.state === 'パニカン') &&
-              <span className={`shrink-0 rounded px-2 py-1 text-xs font-bold ${block.state === 'パニカン' ? 'bg-red-600 text-white' : 'bg-yellow-400 text-yellow-950'}`}>{block.state}</span>}
-            {moveIds.length ? route(moveIds) : <span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span>}
-            {block.dmg !== '' && block.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({block.dmg} dmg)</span>}
+          {/* One column per main-route move. Each branch starts directly below its fork move. */}
+          <div className="character-scroll overflow-x-auto pb-1">
+            <table className="border-separate border-spacing-0 w-max min-w-full">
+              <tbody>
+                <tr>
+                  {moveIds.length ? moveIds.map((moveId, idx) => {
+                    const move = getMove(moveId);
+                    return <td key={`${moveId}-${idx}`} className="align-top pr-2 pb-1">
+                      <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        {idx === 0 && stateLabel}
+                        {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
+                        {idx < moveIds.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' && <ChevronRight size={14} className="text-slate-500 shrink-0" />}
+                        {idx === moveIds.length - 1 && block.dmg !== '' && block.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({block.dmg} dmg)</span>}
+                      </div>
+                    </td>;
+                  }) : <td className="pb-1"><div className="flex items-center gap-2">{stateLabel}<span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span></div></td>}
+                </tr>
+                {branches.map((branch, index) => {
+                  const count = Math.max(0, Math.min(moveIds.length, Number(branch.fromIndex ?? moveIds.length) || 0));
+                  // fromIndex is the count of shared moves, so the fork is at count-1.
+                  const anchor = Math.max(0, count - 1);
+                  const total = Math.max(1, moveIds.length);
+                  const tail = Array.isArray(branch.moveIds) ? branch.moveIds : [];
+                  return <tr key={branch.id || index}>
+                    {anchor > 0 && <td colSpan={anchor} />}
+                    <td colSpan={total - anchor} className="align-top pt-1 pb-2">
+                      <div className="ml-2 pl-3 border-l-2 border-cyan-700/80">
+                        <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-slate-900/70 border border-slate-800 px-2 py-2">
+                          <span className="text-cyan-400 text-xs font-bold shrink-0">↳ 分岐{index + 1}</span>
+                          {tail.length ? route(tail) : <span className="text-slate-500 text-xs">技を追加してください</span>}
+                          {branch.dmg !== '' && branch.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({branch.dmg} dmg)</span>}
+                        </div>
+                        {(branch.selectionSituation || branch.situation) && <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-300 mt-1">
+                          {branch.selectionSituation && <span>選択場面: {branch.selectionSituation}</span>}
+                          {branch.situation && <span>コンボ後の状況: {branch.situation}</span>}
+                        </div>}
+                      </div>
+                    </td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
           </div>
-          {branches.length > 0 && <div className="mt-3 ml-2 pl-3 border-l-2 border-cyan-800/70 space-y-2">
-            {branches.map((branch, index) => {
-              const count = Math.max(0, Math.min(moveIds.length, Number(branch.fromIndex ?? moveIds.length)));
-              const prefix = moveIds.slice(0, count);
-              const tail = Array.isArray(branch.moveIds) ? branch.moveIds : [];
-              const lastPrefix = getMove(prefix[prefix.length - 1]);
-              return <div key={branch.id || index} className="rounded-md bg-slate-900/70 border border-slate-800 px-2 py-2">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-cyan-400 text-xs font-bold shrink-0">↳ 分岐{index + 1}</span>
-                  {prefix.length > 0 && <>{route(prefix, { faded: true })}{String(lastPrefix?.name || '').trim().toUpperCase() !== 'CDR' && tail.length > 0 && <ChevronRight size={14} className="text-slate-500" />}</>}
-                  {tail.length > 0 ? route(tail) : <span className="text-slate-500 text-xs">技を追加してください</span>}
-                  {branch.dmg !== '' && branch.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({branch.dmg} dmg)</span>}
-                </div>
-                {(branch.selectionSituation || branch.situation) && <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-300 mt-1">
-                  {branch.selectionSituation && <span>選択場面: {branch.selectionSituation}</span>}
-                  {branch.situation && <span>コンボ後の状況: {branch.situation}</span>}
-                </div>}
-              </div>;
-            })}
-          </div>}
           {(block.situation || block.selectionSituation) &&
             <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-white mt-2">
               {block.selectionSituation && <span><span className="opacity-70">選択場面:</span> {block.selectionSituation}</span>}
