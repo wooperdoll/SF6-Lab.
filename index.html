@@ -1367,7 +1367,7 @@
         seen.add(branch.id);
         const nextAncestors = new Set(ancestors);
         nextAncestors.add(branch.id);
-        return [{ ...branch, displayTitle: `↳ 分岐${branches.indexOf(branch) + 1}`,
+        return [{ ...branch, displayTitle: `↳ ${String(branch.title || '').trim() || `分岐${branches.indexOf(branch) + 1}`}`,
           children: createChildren(branch.id, nextAncestors) }];
       });
       const rootChildren = createChildren('main');
@@ -1590,6 +1590,7 @@
         moveIds: Array.isArray(data.moveIds) ? data.moveIds : [],
         branches: Array.isArray(data.branches) ? data.branches.map(branch => ({
           ...branch,
+          title: typeof branch.title === 'string' ? branch.title : '',
           id: branch.id || createId(),
           parentId: branch.parentId || 'main',
           fromIndex: Number.isFinite(Number(branch.fromIndex)) ? Number(branch.fromIndex) : (data.moveIds?.length || 0),
@@ -1620,6 +1621,13 @@
         return { ...prev, branches: prev.branches.map(branch => branch.id === activeRouteId ? { ...branch, moveIds: fn(branch.moveIds) } : branch) };
       });
       const chooseRoute = id => { setActiveRouteId(id); setSelectedMove(null); setDragOverMove(null); };
+      const renameBranch = (id, title) => {
+        setComboData(prev => ({ ...prev, branches: prev.branches.map(branch =>
+          branch.id === id ? { ...branch, title } : branch
+        ) }));
+      };
+      const branchLabel = branch => String(branch?.title || '').trim() ||
+        `分岐${comboData.branches.findIndex(item => item.id === branch?.id) + 1}`;
       // The selected move is replaced in-place; an unselected move is appended.
       const handleChooseMove = moveId => {
         const index = selectedMove?.routeId === activeRouteId ? selectedMove.index : -1;
@@ -1652,6 +1660,7 @@
         const id = createId();
         setComboData(prev => ({ ...prev, branches: [...prev.branches, {
           id, parentId: activeRouteId, fromIndex: selectedMove.index, moveIds: [],
+          title: `分岐${prev.branches.length + 1}`,
           dmg: '', situation: '', selectionSituation: ''
         }] }));
         setActiveRouteId(id);
@@ -1773,13 +1782,21 @@
                     className="px-1 text-slate-400 hover:text-cyan-300 disabled:opacity-25"><ChevronDown size={12} /></button>
                 </div>
                 <button type="button" onClick={() => chooseRoute(branch.id)}
-                  className={`px-3 py-1.5 text-xs ${activeRouteId === branch.id ? 'bg-cyan-900/70 text-cyan-100' : 'text-slate-300 hover:bg-slate-800'}`}>分岐{index + 1}</button>
+                  className={`px-3 py-1.5 text-xs ${activeRouteId === branch.id ? 'bg-cyan-900/70 text-cyan-100' : 'text-slate-300 hover:bg-slate-800'}`}>{branchLabel(branch)}</button>
               </div>)}
               {activeBranch && <button type="button" onClick={deleteActiveBranch} className="px-2 py-1.5 text-xs text-red-400 hover:text-red-300 ml-auto"><Trash2 size={13} className="inline mr-1"/>分岐削除</button>}
             </div>
+            {activeBranch && <div className="mb-3 shrink-0">
+              <label htmlFor="active-branch-title" className="block text-xs font-medium text-slate-400 mb-1">分岐名</label>
+              <input id="active-branch-title" type="text"
+                value={activeBranch.title ?? ''}
+                onChange={event => renameBranch(activeRouteId, event.target.value)}
+                placeholder={branchLabel(activeBranch)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-cyan-500" />
+            </div>}
             <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 mb-4 shrink-0 shadow-inner">
               <div className="text-xs text-slate-500 mb-2 uppercase tracking-wide font-semibold">プレビュー {activeBranch ? '（分岐ルート）' : '（メインルート）'}</div>
-              {activeBranch && <div className="text-xs text-slate-400 mb-2">親ルート: {activeBranch.parentId && activeBranch.parentId !== 'main' ? `分岐${comboData.branches.findIndex(b => b.id === activeBranch.parentId) + 1}` : 'メインルート'} ／ 共通部分: {((activeBranch.parentId && activeBranch.parentId !== 'main' ? comboData.branches.find(b => b.id === activeBranch.parentId)?.moveIds : comboData.moveIds) || []).slice(0, Math.max(0, Number(activeBranch.fromIndex) || 0)).map(id => getMove(id)?.name || 'Unknown Move').join(' > ') || 'なし'}</div>}
+              {activeBranch && <div className="text-xs text-slate-400 mb-2">親ルート: {activeBranch.parentId && activeBranch.parentId !== 'main' ? branchLabel(comboData.branches.find(b => b.id === activeBranch.parentId)) : 'メインルート'} ／ 共通部分: {((activeBranch.parentId && activeBranch.parentId !== 'main' ? comboData.branches.find(b => b.id === activeBranch.parentId)?.moveIds : comboData.moveIds) || []).slice(0, Math.max(0, Number(activeBranch.fromIndex) || 0)).map(id => getMove(id)?.name || 'Unknown Move').join(' > ') || 'なし'}</div>}
               <div className="flex flex-wrap items-center gap-2 min-h-[40px]">
                 {activeMoveIds.length === 0 && <span className="text-slate-600 text-sm italic">下の技一覧から追加してください。</span>}
                 {drawPreview(activeMoveIds)}
