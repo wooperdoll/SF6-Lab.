@@ -1329,6 +1329,11 @@
       return <div onClick={onClick} className="p-3 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 transition-all">
         <div className="character-scroll overflow-x-auto pb-1">
           <div className="w-max min-w-0">
+            {block.selectionSituation && (
+              <div className="text-xs text-white mb-2">
+                <span className="opacity-70">選択場面:</span> {block.selectionSituation}
+              </div>
+            )}
             <div ref={mainRowRef} className="flex w-max items-center gap-1.5 pb-1">
               {moveIds.length ? moveIds.map((moveId, idx) => {
                 const move = getMove(moveId);
@@ -1343,6 +1348,9 @@
               }) : <div className="flex items-center gap-2">{stateLabel}<span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span></div>}
               {moveIds.length > 0 && block.dmg !== '' && block.dmg != null &&
                 <span className="text-white text-xs font-semibold whitespace-nowrap">({block.dmg} dmg)</span>}
+              {block.situation && (
+                <span className="text-white text-xs whitespace-nowrap">コンボ後の状況: {block.situation}</span>
+              )}
             </div>
             {branches.map((branch, index) => {
               const count = Math.max(0, Math.min(moveIds.length, Number(branch.fromIndex ?? moveIds.length) || 0));
@@ -1354,26 +1362,24 @@
               return <div key={branch.id || index} className="pt-1 pb-2 w-max"
                 style={{ marginLeft: Math.max(0, nextMoveOffset - 2) }}>
                 <div className="border-l-2 border-cyan-700/80">
-                  <div className="text-cyan-400 text-xs font-bold whitespace-nowrap mb-1">↳ 分岐{index + 1}</div>
+                  <div className="flex items-center gap-3 text-xs whitespace-nowrap mb-1">
+                    <span className="text-cyan-400 font-bold">↳ 分岐{index + 1}</span>
+                    {branch.selectionSituation && (
+                      <span className="text-slate-300">選択場面: {branch.selectionSituation}</span>
+                    )}
+                  </div>
                   <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
                     {tail.length ? route(tail) : <span className="text-slate-500 text-xs">技を追加してください</span>}
                     {branch.dmg !== '' && branch.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({branch.dmg} dmg)</span>}
+                    {branch.situation && (
+                      <span className="text-slate-300 text-xs whitespace-nowrap">コンボ後の状況: {branch.situation}</span>
+                    )}
                   </div>
-                  {(branch.selectionSituation || branch.situation) &&
-                    <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-300 mt-1">
-                      {branch.selectionSituation && <span>選択場面: {branch.selectionSituation}</span>}
-                      {branch.situation && <span>コンボ後の状況: {branch.situation}</span>}
-                    </div>}
                 </div>
               </div>;
             })}
           </div>
         </div>
-        {(block.situation || block.selectionSituation) &&
-          <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-white mt-2">
-            {block.selectionSituation && <span><span className="opacity-70">選択場面:</span> {block.selectionSituation}</span>}
-            {block.situation && <span><span className="opacity-70">コンボ後の状況:</span> {block.situation}</span>}
-          </div>}
       </div>;
     }
 
