@@ -1279,106 +1279,103 @@
       return <textarea ref={ref} value={value} onChange={onChange} placeholder={placeholder} className={`${className} overflow-hidden resize-none`} rows={1} />;
     }
 
-    // Independent flex rows keep long branch tails from stretching the main route.
-    // Each branch's left edge is measured from the move where it forks.
-    function ComboRouteView({ block, moves, onClick }) {
-      const mainRowRef = useRef(null);
-      const moveNodesRef = useRef([]);
-      const [anchorOffsets, setAnchorOffsets] = useState([]);
-      const moveIds = Array.isArray(block.moveIds) ? block.moveIds : [];
-      const branches = Array.isArray(block.branches) ? block.branches : [];
+    // Every route measures its own tiles. Nested branches are anchored to
+    // the selected tile in their immediate parent, not to the main route.
+    function ComboRouteLane({ ids, children, moves, dmg, situation, selectionSituation, title, isMain = false, state }) {
+      const rowRef = useRef(null);
+      const tileRefs = useRef([]);
+      const [positions, setPositions] = useState([]);
       const getMove = id => moves.find(item => item.id === id || item.overrideId === id);
-      const stateLabel = (block.state === 'カウンター' || block.state === 'パニカン') &&
-        <span className={`shrink-0 rounded px-2 py-1 text-xs font-bold ${block.state === 'パニカン' ? 'bg-red-600 text-white' : 'bg-yellow-400 text-yellow-950'}`}>{block.state}</span>;
+      const validIds = Array.isArray(ids) ? ids : [];
+      const childBranches = Array.isArray(children) ? children : [];
 
       useEffect(() => {
-        const row = mainRowRef.current;
+        const row = rowRef.current;
         if (!row) return;
         const measure = () => {
-          const parentRect = row.getBoundingClientRect();
-          const offsets = moveIds.map((_, index) => {
-            const node = moveNodesRef.current[index];
-            return node ? Math.round(node.getBoundingClientRect().left - parentRect.left) : 0;
+          const origin = row.getBoundingClientRect().left;
+          const offsets = validIds.map((_, index) => {
+            const node = tileRefs.current[index];
+            return node ? Math.round(node.getBoundingClientRect().left - origin) : 0;
           });
-          // If a route forks after the last move, position its first move
-          // directly after the last main-route tile, without disturbing gaps.
-          const last = moveNodesRef.current[moveIds.length - 1];
-          offsets.push(last ? Math.round(last.getBoundingClientRect().right - parentRect.left + 6) : 0);
-          setAnchorOffsets(previous => previous.length === offsets.length &&
-            previous.every((value, index) => value === offsets[index]) ? previous : offsets);
+          const last = tileRefs.current[validIds.length - 1];
+          offsets.push(last ? Math.round(last.getBoundingClientRect().right - origin + 6) : 0);
+          setPositions(previous => previous.length === offsets.length &&
+            previous.every((offset, index) => offset === offsets[index]) ? previous : offsets);
         };
         measure();
-        const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+        const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
         if (observer) {
           observer.observe(row);
-          moveNodesRef.current.forEach(node => { if (node) observer.observe(node); });
+          tileRefs.current.forEach(node => { if (node) observer.observe(node); });
         }
         window.addEventListener('resize', measure);
         return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
-      }, [moveIds.join('\u0001'), block.state, block.dmg, moves]);
+      }, [validIds.join('\u0001'), state, dmg, situation, moves]);
 
-      const route = ids => ids.map((moveId, idx) => {
-        const move = getMove(moveId);
-        return <React.Fragment key={`${moveId}-${idx}`}>
-          {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
-          {idx < ids.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' &&
-            <ChevronRight size={14} className="text-slate-500 shrink-0" />}
-        </React.Fragment>;
+      const stateVisible = isMain && (state === 'カウンター' || state === 'パニカン');
+      return <div className="w-max min-w-0">
+        {(title || selectionSituation) && <div className="flex items-center gap-3 text-xs whitespace-nowrap mb-1">
+          {title && <span className="text-cyan-400 font-bold">{title}</span>}
+          {selectionSituation && <span className="text-slate-300">選択場面: {selectionSituation}</span>}
+        </div>}
+        <div ref={rowRef} className="flex w-max items-center gap-1.5 pb-1">
+          {stateVisible && <span className={`shrink-0 rounded px-2 py-1 text-xs font-bold ${state === 'パニカン' ? 'bg-red-600 text-white' : 'bg-yellow-400 text-yellow-950'}`}>{state}</span>}
+          {validIds.length ? validIds.map((id, index) => {
+            const move = getMove(id);
+            return <React.Fragment key={`${id}-${index}`}>
+              <div ref={node => { tileRefs.current[index] = node; }} className="inline-flex items-center shrink-0">
+                {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
+              </div>
+              {index < validIds.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' &&
+                <ChevronRight size={14} className="text-slate-500 shrink-0" />}
+            </React.Fragment>;
+          }) : <span className="text-slate-500 text-sm italic">{isMain ? 'クリックでコンボを入力。' : '技を追加してください'}</span>}
+          {dmg !== '' && dmg != null && validIds.length > 0 &&
+            <span className="text-white text-xs font-semibold whitespace-nowrap">({dmg} dmg)</span>}
+          {situation && <span className="text-white text-xs whitespace-nowrap">状況: {situation}</span>}
+        </div>
+        {childBranches.map((branch, index) => {
+          const anchor = Math.max(0, Math.min(validIds.length, Number(branch.fromIndex) || 0));
+          // Sibling order is independent of nesting depth.
+          return <div key={branch.id || index} className="pt-1 pb-2 w-max"
+            style={{ marginLeft: Math.max(0, (positions[anchor] ?? 0) - 2) }}>
+            <div className="border-l-2 border-cyan-700/80 pl-2">
+              <ComboRouteLane ids={branch.moveIds} moves={moves}
+                title={branch.displayTitle} dmg={branch.dmg} situation={branch.situation}
+                selectionSituation={branch.selectionSituation} children={branch.children} />
+            </div>
+          </div>;
+        })}
+      </div>;
+    }
+
+    function ComboRouteView({ block, moves, onClick }) {
+      const branches = Array.isArray(block.branches) ? block.branches : [];
+      const byParent = new Map();
+      const branchIds = new Set(branches.map(b => b.id));
+      branches.forEach(branch => {
+        const parent = branch.parentId && branchIds.has(branch.parentId) && branch.parentId !== branch.id
+          ? branch.parentId : 'main';
+        if (!byParent.has(parent)) byParent.set(parent, []);
+        byParent.get(parent).push(branch);
       });
-
+      // Prevent a malformed cyclic parent graph from recursing forever.
+      const seen = new Set();
+      const createChildren = (parentId, ancestors = new Set()) => (byParent.get(parentId) || []).flatMap(branch => {
+        if (ancestors.has(branch.id) || seen.has(branch.id)) return [];
+        seen.add(branch.id);
+        const nextAncestors = new Set(ancestors);
+        nextAncestors.add(branch.id);
+        return [{ ...branch, displayTitle: `↳ 分岐${branches.indexOf(branch) + 1}`,
+          children: createChildren(branch.id, nextAncestors) }];
+      });
+      const rootChildren = createChildren('main');
       return <div onClick={onClick} className="p-3 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 transition-all">
         <div className="character-scroll overflow-x-auto pb-1">
-          <div className="w-max min-w-0">
-            {block.selectionSituation && (
-              <div className="text-xs text-white mb-2">
-                <span className="opacity-70">選択場面:</span> {block.selectionSituation}
-              </div>
-            )}
-            <div ref={mainRowRef} className="flex w-max items-center gap-1.5 pb-1">
-              {moveIds.length ? moveIds.map((moveId, idx) => {
-                const move = getMove(moveId);
-                return <React.Fragment key={`${moveId}-${idx}`}>
-                  {idx === 0 && stateLabel}
-                  <div ref={node => { moveNodesRef.current[idx] = node; }} className="inline-flex items-center shrink-0">
-                    {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
-                  </div>
-                  {idx < moveIds.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' &&
-                    <ChevronRight size={14} className="text-slate-500 shrink-0" />}
-                </React.Fragment>;
-              }) : <div className="flex items-center gap-2">{stateLabel}<span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span></div>}
-              {moveIds.length > 0 && block.dmg !== '' && block.dmg != null &&
-                <span className="text-white text-xs font-semibold whitespace-nowrap">({block.dmg} dmg)</span>}
-              {block.situation && (
-                <span className="text-white text-xs whitespace-nowrap">コンボ後の状況: {block.situation}</span>
-              )}
-            </div>
-            {branches.map((branch, index) => {
-              const count = Math.max(0, Math.min(moveIds.length, Number(branch.fromIndex ?? moveIds.length) || 0));
-              // fromIndex is the number of moves BEFORE the selected fork point.
-              // The first branched move lines up with the selected main-route
-              // move (index=count), not the following move.
-              const tail = Array.isArray(branch.moveIds) ? branch.moveIds : [];
-              const nextMoveOffset = anchorOffsets[count] ?? 0;
-              return <div key={branch.id || index} className="pt-1 pb-2 w-max"
-                style={{ marginLeft: Math.max(0, nextMoveOffset - 2) }}>
-                <div className="border-l-2 border-cyan-700/80">
-                  <div className="flex items-center gap-3 text-xs whitespace-nowrap mb-1">
-                    <span className="text-cyan-400 font-bold">↳ 分岐{index + 1}</span>
-                    {branch.selectionSituation && (
-                      <span className="text-slate-300">選択場面: {branch.selectionSituation}</span>
-                    )}
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                    {tail.length ? route(tail) : <span className="text-slate-500 text-xs">技を追加してください</span>}
-                    {branch.dmg !== '' && branch.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({branch.dmg} dmg)</span>}
-                    {branch.situation && (
-                      <span className="text-slate-300 text-xs whitespace-nowrap">コンボ後の状況: {branch.situation}</span>
-                    )}
-                  </div>
-                </div>
-              </div>;
-            })}
-          </div>
+          <ComboRouteLane isMain ids={block.moveIds} state={block.state} moves={moves}
+            dmg={block.dmg} situation={block.situation}
+            selectionSituation={block.selectionSituation} children={rootChildren} />
         </div>
       </div>;
     }
@@ -1594,6 +1591,7 @@
         branches: Array.isArray(data.branches) ? data.branches.map(branch => ({
           ...branch,
           id: branch.id || createId(),
+          parentId: branch.parentId || 'main',
           fromIndex: Number.isFinite(Number(branch.fromIndex)) ? Number(branch.fromIndex) : (data.moveIds?.length || 0),
           moveIds: Array.isArray(branch.moveIds) ? branch.moveIds : [],
           dmg: branch.dmg ?? '', situation: branch.situation ?? '', selectionSituation: branch.selectionSituation ?? ''
@@ -1632,68 +1630,82 @@
         }
         setSelectedMove(null);
       };
+      // Reanchor only the direct children of the route being edited.
+      const updateChildAnchors = (allBranches, parentId, fn) => allBranches.map(branch =>
+        (branch.parentId || 'main') === parentId ? { ...branch, fromIndex: fn(Number(branch.fromIndex) || 0) } : branch);
       const handleRemoveSelected = () => {
         if (!selectedMove || selectedMove.routeId !== activeRouteId) return;
         const at = selectedMove.index;
-        if (activeRouteId === 'main') {
-          // Branch anchors are stored as shared-move counts. Shift them when
-          // a main-route move before the anchor is removed.
-          setComboData(prev => ({
-            ...prev,
-            moveIds: prev.moveIds.filter((_, i) => i !== at),
-            branches: prev.branches.map(b => ({ ...b, fromIndex: Math.max(0, Number(b.fromIndex || 0) - (at < b.fromIndex ? 1 : 0)) }))
-          }));
-        } else modifyRoute(ids => ids.filter((_, i) => i !== at));
+        setComboData(prev => {
+          const oldIds = activeRouteId === 'main' ? prev.moveIds : prev.branches.find(b => b.id === activeRouteId)?.moveIds || [];
+          if (at < 0 || at >= oldIds.length) return prev;
+          const nextIds = oldIds.filter((_, i) => i !== at);
+          const nextBranches = updateChildAnchors(prev.branches, activeRouteId, anchor =>
+            Math.max(0, Math.min(nextIds.length ? nextIds.length - 1 : 0, anchor - (at < anchor ? 1 : 0))));
+          if (activeRouteId === 'main') return { ...prev, moveIds: nextIds, branches: nextBranches };
+          return { ...prev, branches: nextBranches.map(b => b.id === activeRouteId ? { ...b, moveIds: nextIds } : b) };
+        });
         setSelectedMove(null);
       };
       const addBranchAtSelection = () => {
-        if (!selectedMove || selectedMove.routeId !== 'main') return;
+        if (!selectedMove || selectedMove.routeId !== activeRouteId) return;
         const id = createId();
         setComboData(prev => ({ ...prev, branches: [...prev.branches, {
-          id, fromIndex: selectedMove.index, moveIds: [], dmg: '', situation: '', selectionSituation: ''
+          id, parentId: activeRouteId, fromIndex: selectedMove.index, moveIds: [],
+          dmg: '', situation: '', selectionSituation: ''
         }] }));
         setActiveRouteId(id);
         setSelectedMove(null);
       };
       const deleteActiveBranch = () => {
-        setComboData(prev => ({ ...prev, branches: prev.branches.filter(branch => branch.id !== activeRouteId) }));
-        chooseRoute('main');
+        if (activeRouteId === 'main') return;
+        const parentId = activeBranch?.parentId || 'main';
+        setComboData(prev => {
+          const removeIds = new Set([activeRouteId]);
+          let changed = true;
+          while (changed) {
+            changed = false;
+            for (const branch of prev.branches) {
+              if (!removeIds.has(branch.id) && removeIds.has(branch.parentId)) {
+                removeIds.add(branch.id); changed = true;
+              }
+            }
+          }
+          return { ...prev, branches: prev.branches.filter(branch => !removeIds.has(branch.id)) };
+        });
+        chooseRoute(parentId);
       };
       const reorderBranch = (id, direction) => {
         setComboData(prev => {
-          const from = prev.branches.findIndex(branch => branch.id === id);
-          const to = from + direction;
-          if (from < 0 || to < 0 || to >= prev.branches.length) return prev;
+          const branch = prev.branches.find(b => b.id === id);
+          if (!branch) return prev;
+          const siblings = prev.branches.filter(b => (b.parentId || 'main') === (branch.parentId || 'main'));
+          const index = siblings.findIndex(b => b.id === id);
+          const other = siblings[index + direction];
+          if (!other) return prev;
           const next = [...prev.branches];
-          [next[from], next[to]] = [next[to], next[from]];
+          const a = next.findIndex(b => b.id === id);
+          const b = next.findIndex(item => item.id === other.id);
+          [next[a], next[b]] = [next[b], next[a]];
           return { ...prev, branches: next };
         });
       };
       const reorderPreview = (from, to) => {
         if (from === to) return;
-        if (activeRouteId === 'main') {
-          setComboData(prev => {
-            const ids = [...prev.moveIds];
-            if (from < 0 || to < 0 || from >= ids.length || to >= ids.length) return prev;
-            // Track the original index for each move to preserve each branch's anchor.
-            const indices = ids.map((_, i) => i);
-            const [movingId] = ids.splice(from, 1);
-            const [movingIndex] = indices.splice(from, 1);
-            ids.splice(to, 0, movingId);
-            indices.splice(to, 0, movingIndex);
-            const branches = prev.branches.map(branch => {
-              const oldAnchor = Number(branch.fromIndex || 0);
-              if (oldAnchor <= 0) return branch;
-              const newAnchor = indices.indexOf(Math.min(oldAnchor, prev.moveIds.length) - 1);
-              return { ...branch, fromIndex: newAnchor < 0 ? Math.min(oldAnchor, ids.length) : newAnchor + 1 };
-            });
-            return { ...prev, moveIds: ids, branches };
+        setComboData(prev => {
+          const oldIds = activeRouteId === 'main' ? prev.moveIds : prev.branches.find(b => b.id === activeRouteId)?.moveIds || [];
+          if (from < 0 || to < 0 || from >= oldIds.length || to >= oldIds.length) return prev;
+          const nextIds = [...oldIds];
+          const originalIndexes = oldIds.map((_, i) => i);
+          nextIds.splice(to, 0, nextIds.splice(from, 1)[0]);
+          originalIndexes.splice(to, 0, originalIndexes.splice(from, 1)[0]);
+          const nextBranches = updateChildAnchors(prev.branches, activeRouteId, index => {
+            const next = originalIndexes.indexOf(index);
+            return next === -1 ? Math.min(index, nextIds.length - 1) : next;
           });
-        } else modifyRoute(ids => {
-          if (from < 0 || to < 0 || from >= ids.length || to >= ids.length) return ids;
-          const result = [...ids];
-          result.splice(to, 0, result.splice(from, 1)[0]);
-          return result;
+          return activeRouteId === 'main'
+            ? { ...prev, moveIds: nextIds, branches: nextBranches }
+            : { ...prev, branches: nextBranches.map(b => b.id === activeRouteId ? { ...b, moveIds: nextIds } : b) };
         });
         setSelectedMove(null);
       };
@@ -1737,8 +1749,8 @@
               {move ? <MoveTile minimal move={move} showMoveName /> : <span className="bg-red-900/50 text-red-200 px-2 py-1 rounded text-xs">Missing</span>}
             </button>
             {selected && <div className="flex items-center gap-1" onMouseDown={e => e.stopPropagation()}>
-              {activeRouteId === 'main' && <button type="button" onClick={addBranchAtSelection}
-                className="px-2 py-0.5 text-[11px] rounded bg-cyan-800 hover:bg-cyan-700 text-white">分岐</button>}
+              <button type="button" onClick={addBranchAtSelection}
+                className="px-2 py-0.5 text-[11px] rounded bg-cyan-800 hover:bg-cyan-700 text-white">分岐</button>
               <button type="button" onClick={handleRemoveSelected}
                 className="px-2 py-0.5 text-[11px] rounded bg-red-900 hover:bg-red-800 text-white">削除</button>
             </div>}
@@ -1755,9 +1767,9 @@
                 className={`px-3 py-1.5 text-xs rounded-md border ${activeRouteId === 'main' ? 'bg-cyan-900/70 border-cyan-600 text-cyan-100' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}>メインルート</button>
               {comboData.branches.map((branch, index) => <div key={branch.id} className="inline-flex items-center rounded-md border border-slate-700 overflow-hidden">
                 <div className="flex flex-col border-r border-slate-700">
-                  <button type="button" disabled={index === 0} onClick={() => reorderBranch(branch.id, -1)} title="分岐を上へ" aria-label={`分岐${index + 1}を上へ`}
+                  <button type="button" disabled={!comboData.branches.slice(0, index).some(b => (b.parentId || 'main') === (branch.parentId || 'main'))} onClick={() => reorderBranch(branch.id, -1)} title="分岐を上へ" aria-label={`分岐${index + 1}を上へ`}
                     className="px-1 text-slate-400 hover:text-cyan-300 disabled:opacity-25"><ChevronUp size={12} /></button>
-                  <button type="button" disabled={index === comboData.branches.length - 1} onClick={() => reorderBranch(branch.id, 1)} title="分岐を下へ" aria-label={`分岐${index + 1}を下へ`}
+                  <button type="button" disabled={!comboData.branches.slice(index + 1).some(b => (b.parentId || 'main') === (branch.parentId || 'main'))} onClick={() => reorderBranch(branch.id, 1)} title="分岐を下へ" aria-label={`分岐${index + 1}を下へ`}
                     className="px-1 text-slate-400 hover:text-cyan-300 disabled:opacity-25"><ChevronDown size={12} /></button>
                 </div>
                 <button type="button" onClick={() => chooseRoute(branch.id)}
@@ -1767,7 +1779,7 @@
             </div>
             <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 mb-4 shrink-0 shadow-inner">
               <div className="text-xs text-slate-500 mb-2 uppercase tracking-wide font-semibold">プレビュー {activeBranch ? '（分岐ルート）' : '（メインルート）'}</div>
-              {activeBranch && <div className="text-xs text-slate-400 mb-2">共通部分: {comboData.moveIds.slice(0, Math.min(activeBranch.fromIndex, comboData.moveIds.length)).map(id => getMove(id)?.name || 'Unknown Move').join(' > ') || 'なし'}</div>}
+              {activeBranch && <div className="text-xs text-slate-400 mb-2">親ルート: {activeBranch.parentId && activeBranch.parentId !== 'main' ? `分岐${comboData.branches.findIndex(b => b.id === activeBranch.parentId) + 1}` : 'メインルート'} ／ 共通部分: {((activeBranch.parentId && activeBranch.parentId !== 'main' ? comboData.branches.find(b => b.id === activeBranch.parentId)?.moveIds : comboData.moveIds) || []).slice(0, Math.max(0, Number(activeBranch.fromIndex) || 0)).map(id => getMove(id)?.name || 'Unknown Move').join(' > ') || 'なし'}</div>}
               <div className="flex flex-wrap items-center gap-2 min-h-[40px]">
                 {activeMoveIds.length === 0 && <span className="text-slate-600 text-sm italic">下の技一覧から追加してください。</span>}
                 {drawPreview(activeMoveIds)}
