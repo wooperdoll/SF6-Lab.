@@ -1526,9 +1526,13 @@
       };
 
       return (
-        <div draggable="true" {...cardDragProps}
-          className={`bg-slate-900 border rounded-xl shadow-lg overflow-hidden flex flex-col group relative cursor-grab active:cursor-grabbing ${isDragTarget ? 'border-cyan-400 ring-2 ring-cyan-500/50' : 'border-slate-700'}`}>
+        <div {...cardDragProps}
+          className={`bg-slate-900 border rounded-xl shadow-lg overflow-hidden flex flex-col group relative ${isDragTarget ? 'border-cyan-400 ring-2 ring-cyan-500/50' : 'border-slate-700'}`}>
           <div className="px-2 py-1 bg-slate-800/50 flex justify-between items-center gap-2">
+            <span draggable="true" aria-label="ドラッグしてカードを並べ替え" title="ドラッグしてカードを並べ替え"
+              className="shrink-0 cursor-grab active:cursor-grabbing touch-none text-slate-500 hover:text-cyan-300 select-none px-1" onClick={e => e.stopPropagation()}>
+              <GripVertical size={17} />
+            </span>
             <input type="text" value={title} aria-label="カードのタイトル"
               onChange={e => {
                 const value = e.target.value;
@@ -1589,13 +1593,18 @@
           dmg: branch.dmg ?? '', situation: branch.situation ?? '', selectionSituation: branch.selectionSituation ?? ''
         })) : [],
         state: data.state === '通常' ? 'ノーマル' : (data.state || 'ノーマル'),
-        dmg: data.dmg ?? '',
-        situation: data.situation ?? '',
-        selectionSituation: data.selectionSituation ?? ''
+        dmg: data.dmg ?? '', situation: data.situation ?? '', selectionSituation: data.selectionSituation ?? ''
       });
       const [comboData, setComboData] = useState(() => normalizeCombo(initialData));
       const [activeRouteId, setActiveRouteId] = useState('main');
-      useEffect(() => { setComboData(normalizeCombo(initialData)); setActiveRouteId('main'); }, [initialData.id]);
+      const [selectedMove, setSelectedMove] = useState(null); // {routeId, index}
+      const draggedPreviewRef = useRef(null);
+      const [dragOverMove, setDragOverMove] = useState(null);
+      useEffect(() => {
+        setComboData(normalizeCombo(initialData));
+        setActiveRouteId('main');
+        setSelectedMove(null);
+      }, [initialData.id]);
       if (!isOpen) return null;
 
       const currentCategoryMoves = moves.filter(m => m.category === activeCategory);
@@ -1606,49 +1615,129 @@
         if (activeRouteId === 'main') return { ...prev, moveIds: fn(prev.moveIds) };
         return { ...prev, branches: prev.branches.map(branch => branch.id === activeRouteId ? { ...branch, moveIds: fn(branch.moveIds) } : branch) };
       });
-      const handleAddMove = moveId => modifyRoute(ids => [...ids, moveId]);
-      const handleRemoveMove = index => modifyRoute(ids => ids.filter((_, i) => i !== index));
+      const chooseRoute = id => { setActiveRouteId(id); setSelectedMove(null); setDragOverMove(null); };
+      // The selected move is replaced in-place; an unselected move is appended.
+      const handleChooseMove = moveId => {
+        const index = selectedMove?.routeId === activeRouteId ? selectedMove.index : -1;
+        if (index >= 0 && index < activeMoveIds.length) {
+          modifyRoute(ids => ids.map((id, i) => i === index ? moveId : id));
+        } else {
+          modifyRoute(ids => [...ids, moveId]);
+        }
+        setSelectedMove(null);
+      };
+      const handleRemoveSelected = () => {
+        if (!selectedMove || selectedMove.routeId !== activeRouteId) return;
+        const at = selectedMove.index;
+        if (activeRouteId === 'main') {
+          // Branch anchors are stored as shared-move counts. Shift them when
+          // a main-route move before the anchor is removed.
+          setComboData(prev => ({
+            ...prev,
+            moveIds: prev.moveIds.filter((_, i) => i !== at),
+            branches: prev.branches.map(b => ({ ...b, fromIndex: Math.max(0, Number(b.fromIndex || 0) - (at < b.fromIndex ? 1 : 0)) }))
+          }));
+        } else modifyRoute(ids => ids.filter((_, i) => i !== at));
+        setSelectedMove(null);
+      };
+      const addBranchAtSelection = () => {
+        if (!selectedMove || selectedMove.routeId !== 'main') return;
+        const id = createId();
+        setComboData(prev => ({ ...prev, branches: [...prev.branches, {
+          id, fromIndex: selectedMove.index + 1, moveIds: [], dmg: '', situation: '', selectionSituation: ''
+        }] }));
+        setActiveRouteId(id);
+        setSelectedMove(null);
+      };
+      const deleteActiveBranch = () => {
+        setComboData(prev => ({ ...prev, branches: prev.branches.filter(branch => branch.id !== activeRouteId) }));
+        chooseRoute('main');
+      };
+      const reorderBranch = (id, direction) => {
+        setComboData(prev => {
+          const from = prev.branches.findIndex(branch => branch.id === id);
+          const to = from + direction;
+          if (from < 0 || to < 0 || to >= prev.branches.length) return prev;
+          const next = [...prev.branches];
+          [next[from], next[to]] = [next[to], next[from]];
+          return { ...prev, branches: next };
+        });
+      };
+      const reorderPreview = (from, to) => {
+        if (from === to) return;
+        if (activeRouteId === 'main') {
+          setComboData(prev => {
+            const ids = [...prev.moveIds];
+            if (from < 0 || to < 0 || from >= ids.length || to >= ids.length) return prev;
+            // Track the original index for each move to preserve each branch's anchor.
+            const indices = ids.map((_, i) => i);
+            const [movingId] = ids.splice(from, 1);
+            const [movingIndex] = indices.splice(from, 1);
+            ids.splice(to, 0, movingId);
+            indices.splice(to, 0, movingIndex);
+            const branches = prev.branches.map(branch => {
+              const oldAnchor = Number(branch.fromIndex || 0);
+              if (oldAnchor <= 0) return branch;
+              const newAnchor = indices.indexOf(Math.min(oldAnchor, prev.moveIds.length) - 1);
+              return { ...branch, fromIndex: newAnchor < 0 ? Math.min(oldAnchor, ids.length) : newAnchor + 1 };
+            });
+            return { ...prev, moveIds: ids, branches };
+          });
+        } else modifyRoute(ids => {
+          if (from < 0 || to < 0 || from >= ids.length || to >= ids.length) return ids;
+          const result = [...ids];
+          result.splice(to, 0, result.splice(from, 1)[0]);
+          return result;
+        });
+        setSelectedMove(null);
+      };
+      const onPreviewDragStart = (e, index) => {
+        draggedPreviewRef.current = { routeId: activeRouteId, index };
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('application/x-sf6-combo', JSON.stringify(draggedPreviewRef.current));
+        e.dataTransfer.setData('text/plain', String(index));
+      };
+      const onPreviewDrop = (e, index) => {
+        e.preventDefault(); e.stopPropagation();
+        const dragged = draggedPreviewRef.current;
+        draggedPreviewRef.current = null; setDragOverMove(null);
+        if (dragged?.routeId !== activeRouteId) return;
+        reorderPreview(dragged.index, index);
+      };
       const changeField = (name, value) => setComboData(prev => {
         if (!activeBranch || name === 'state') return { ...prev, [name]: value };
         return { ...prev, branches: prev.branches.map(branch => branch.id === activeRouteId ? { ...branch, [name]: value } : branch) };
       });
       const handleChange = event => changeField(event.target.name, event.target.value);
-      const addBranch = () => {
-        const id = createId();
-        setComboData(prev => ({ ...prev, branches: [...prev.branches, {
-          id,
-          fromIndex: Math.max(0, prev.moveIds.length - 1),
-          moveIds: [], dmg: '', situation: '', selectionSituation: ''
-        }] }));
-        setActiveRouteId(id);
-      };
-      const deleteActiveBranch = () => {
-        setComboData(prev => ({ ...prev, branches: prev.branches.filter(branch => branch.id !== activeRouteId) }));
-        setActiveRouteId('main');
-      };
-      const changeBranchPoint = value => {
-        const fromIndex = Number(value);
-        setComboData(prev => ({ ...prev, branches: prev.branches.map(branch => branch.id === activeRouteId ? { ...branch, fromIndex } : branch) }));
-      };
       const [isSaving, setIsSaving] = useState(false);
       const handleSubmitCombo = async () => {
         if (isSaving) return;
         setIsSaving(true);
-        try {
-          await onSave({ ...comboData, state: comboData.state === '通常' ? 'ノーマル' : comboData.state });
-        } catch (error) {
-          console.error('Combo save failed:', error);
-          alert(`コンボを保存できませんでした: ${error.message}`);
-        } finally { setIsSaving(false); }
+        try { await onSave({ ...comboData, state: comboData.state === '通常' ? 'ノーマル' : comboData.state }); }
+        catch (error) { console.error('Combo save failed:', error); alert(`コンボを保存できませんでした: ${error.message}`); }
+        finally { setIsSaving(false); }
       };
       const drawPreview = ids => ids.map((mid, idx) => {
         const move = getMove(mid);
+        const selected = selectedMove?.routeId === activeRouteId && selectedMove.index === idx;
         return <React.Fragment key={`${mid}-${idx}`}>
-          <button type="button" onClick={() => handleRemoveMove(idx)} title="クリックで技を削除" className="relative group flex items-center">
-            {move ? <MoveTile minimal move={move} showMoveName /> : <span className="bg-red-900/50 text-red-200 px-2 py-1 rounded text-xs">Missing</span>}
-            <span className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100"><X size={10}/></span>
-          </button>
-          {idx < ids.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' && <ChevronRight size={16} className="text-slate-500" />}
+          <div draggable="true" onDragStart={e => onPreviewDragStart(e, idx)}
+            onDragEnd={() => { draggedPreviewRef.current = null; setDragOverMove(null); }}
+            onDragOver={e => { if (draggedPreviewRef.current?.routeId === activeRouteId) { e.preventDefault(); setDragOverMove(idx); } }}
+            onDrop={e => onPreviewDrop(e, idx)}
+            className={`relative inline-flex flex-col items-start gap-1 rounded-md p-1 cursor-grab active:cursor-grabbing ${selected ? 'ring-2 ring-cyan-400 bg-cyan-900/30' : dragOverMove === idx ? 'ring-2 ring-amber-400' : ''}`}>
+            <button type="button" onClick={() => setSelectedMove(selected ? null : {routeId: activeRouteId, index: idx})}
+              title="クリックで技を選択・ドラッグで順序変更" className="inline-flex items-center">
+              {move ? <MoveTile minimal move={move} showMoveName /> : <span className="bg-red-900/50 text-red-200 px-2 py-1 rounded text-xs">Missing</span>}
+            </button>
+            {selected && <div className="flex items-center gap-1" onMouseDown={e => e.stopPropagation()}>
+              {activeRouteId === 'main' && <button type="button" onClick={addBranchAtSelection}
+                className="px-2 py-0.5 text-[11px] rounded bg-cyan-800 hover:bg-cyan-700 text-white">分岐</button>}
+              <button type="button" onClick={handleRemoveSelected}
+                className="px-2 py-0.5 text-[11px] rounded bg-red-900 hover:bg-red-800 text-white">削除</button>
+            </div>}
+          </div>
+          {idx < ids.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' && <ChevronRight size={16} className="text-slate-500 shrink-0" />}
         </React.Fragment>;
       });
 
@@ -1656,21 +1745,20 @@
         <Modal isOpen={isOpen} onClose={onClose} title="コンボ編集" maxWidth="max-w-3xl">
           <div className="flex flex-col h-[72vh] min-h-[420px]">
             <div className="mb-3 flex flex-wrap gap-2 items-center shrink-0">
-              <button type="button" onClick={() => setActiveRouteId('main')}
+              <button type="button" onClick={() => chooseRoute('main')}
                 className={`px-3 py-1.5 text-xs rounded-md border ${activeRouteId === 'main' ? 'bg-cyan-900/70 border-cyan-600 text-cyan-100' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}>メインルート</button>
-              {comboData.branches.map((branch, index) => <button key={branch.id} type="button" onClick={() => setActiveRouteId(branch.id)}
-                className={`px-3 py-1.5 text-xs rounded-md border ${activeRouteId === branch.id ? 'bg-cyan-900/70 border-cyan-600 text-cyan-100' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}>分岐{index + 1}</button>)}
-              <button type="button" onClick={addBranch} className="px-3 py-1.5 text-xs rounded-md border border-cyan-800 text-cyan-300 hover:bg-cyan-900/30"><Plus size={13} className="inline mr-1"/>分岐追加</button>
+              {comboData.branches.map((branch, index) => <div key={branch.id} className="inline-flex items-center rounded-md border border-slate-700 overflow-hidden">
+                <div className="flex flex-col border-r border-slate-700">
+                  <button type="button" disabled={index === 0} onClick={() => reorderBranch(branch.id, -1)} title="分岐を上へ" aria-label={`分岐${index + 1}を上へ`}
+                    className="px-1 text-slate-400 hover:text-cyan-300 disabled:opacity-25"><ChevronUp size={12} /></button>
+                  <button type="button" disabled={index === comboData.branches.length - 1} onClick={() => reorderBranch(branch.id, 1)} title="分岐を下へ" aria-label={`分岐${index + 1}を下へ`}
+                    className="px-1 text-slate-400 hover:text-cyan-300 disabled:opacity-25"><ChevronDown size={12} /></button>
+                </div>
+                <button type="button" onClick={() => chooseRoute(branch.id)}
+                  className={`px-3 py-1.5 text-xs ${activeRouteId === branch.id ? 'bg-cyan-900/70 text-cyan-100' : 'text-slate-300 hover:bg-slate-800'}`}>分岐{index + 1}</button>
+              </div>)}
               {activeBranch && <button type="button" onClick={deleteActiveBranch} className="px-2 py-1.5 text-xs text-red-400 hover:text-red-300 ml-auto"><Trash2 size={13} className="inline mr-1"/>分岐削除</button>}
             </div>
-            {activeBranch && <div className="mb-3 flex flex-wrap items-center gap-2 text-xs shrink-0">
-              <label htmlFor="branch-point" className="text-slate-300">分岐する位置</label>
-              <select id="branch-point" value={Math.min(comboData.moveIds.length, Math.max(0, activeBranch.fromIndex))}
-                onChange={e => changeBranchPoint(e.target.value)} className="min-w-0 flex-1 bg-slate-950 border border-slate-700 rounded-md p-2 text-white">
-                <option value="0">コンボ開始時点</option>
-                {comboData.moveIds.map((id, i) => <option key={i} value={i + 1}>{i + 1}技目「{getMove(id)?.name || 'Unknown Move'}」の直後</option>)}
-              </select>
-            </div>}
             <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 mb-4 shrink-0 shadow-inner">
               <div className="text-xs text-slate-500 mb-2 uppercase tracking-wide font-semibold">プレビュー {activeBranch ? '（分岐ルート）' : '（メインルート）'}</div>
               {activeBranch && <div className="text-xs text-slate-400 mb-2">共通部分: {comboData.moveIds.slice(0, Math.min(activeBranch.fromIndex, comboData.moveIds.length)).map(id => getMove(id)?.name || 'Unknown Move').join(' > ') || 'なし'}</div>}
@@ -1678,6 +1766,7 @@
                 {activeMoveIds.length === 0 && <span className="text-slate-600 text-sm italic">下の技一覧から追加してください。</span>}
                 {drawPreview(activeMoveIds)}
               </div>
+              {selectedMove?.routeId === activeRouteId && <p className="mt-2 text-[11px] text-cyan-300">技を選択中：下の技一覧をクリックすると選択した技を上書きします。ドラッグで順番を変更できます。</p>}
             </div>
             <div className="flex-1 flex flex-col min-h-0 border border-slate-800 rounded-lg overflow-hidden mb-4">
               <div className="character-scroll flex overflow-x-auto bg-slate-950 border-b border-slate-800 shrink-0">
@@ -1687,28 +1776,23 @@
               </div>
               <div className="character-scroll flex-1 overflow-y-auto p-3 bg-slate-900/50">
                 <div className="flex flex-wrap gap-2">
-                  {currentCategoryMoves.map(move => <button key={move.id} onClick={() => handleAddMove(move.overrideId || move.id)} className={`px-3 py-1.5 rounded-md text-sm font-bold border shadow-sm transition-all hover:scale-105 active:scale-95 ${STRENGTH_COLORS[move.strength] || STRENGTH_COLORS['その他']}`}>{MOVE_NAME_CATEGORIES.includes(move.category) && move.moveName ? `${move.name}（${move.moveName}）` : move.name}</button>)}
+                  {currentCategoryMoves.map(move => <button key={move.id} type="button" onClick={() => handleChooseMove(move.overrideId || move.id)}
+                    className={`px-3 py-1.5 rounded-md text-sm font-bold border shadow-sm transition-all hover:scale-105 active:scale-95 ${move.category === 'SA' || /^(?:SA[123]?|CA)$/i.test(String(move.name || '').trim()) ? 'bg-purple-300 text-purple-950 border-purple-400' : (STRENGTH_COLORS[move.strength] || STRENGTH_COLORS['その他'])}`}>
+                    {MOVE_NAME_CATEGORIES.includes(move.category) && move.moveName ? `${move.name}（${move.moveName}）` : move.name}
+                  </button>)}
                   {currentCategoryMoves.length === 0 && <div className="w-full text-center text-slate-500 text-sm py-4">No moves found in this category.</div>}
                 </div>
               </div>
             </div>
             <div className="character-scroll grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0 pt-2 border-t border-slate-800 max-h-[190px] overflow-y-auto">
-              {!activeBranch && <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">ヒット</label>
-                <select name="state" value={comboData.state === '通常' ? 'ノーマル' : (comboData.state || 'ノーマル')} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm">{COMBO_STATES.map(s => <option key={s} value={s}>{s}</option>)}</select>
-              </div>}
-              <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">ダメージ（任意）</label>
-                <input type="text" name="dmg" value={(activeBranch || comboData).dmg || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">コンボ選択場面（任意）</label>
-                <input type="text" name="selectionSituation" value={(activeBranch || comboData).selectionSituation || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm" placeholder="ex. 立ち確認、Dゲージ3本 etc." />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">コンボ後の状況（任意）</label>
-                <input type="text" name="situation" value={(activeBranch || comboData).situation || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm" placeholder="ex. 2中P消費で+4F etc." />
-              </div>
+              {!activeBranch && <div><label className="block text-xs font-medium text-slate-400 mb-1">ヒット</label>
+                <select name="state" value={comboData.state === '通常' ? 'ノーマル' : (comboData.state || 'ノーマル')} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm">{COMBO_STATES.map(state => <option key={state} value={state}>{state}</option>)}</select></div>}
+              <div><label className="block text-xs font-medium text-slate-400 mb-1">ダメージ（任意）</label>
+                <input type="text" name="dmg" value={(activeBranch || comboData).dmg || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm" /></div>
+              <div><label className="block text-xs font-medium text-slate-400 mb-1">コンボ選択場面（任意）</label>
+                <input type="text" name="selectionSituation" value={(activeBranch || comboData).selectionSituation || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm" placeholder="ex. 立ち確認、Dゲージ3本 etc." /></div>
+              <div><label className="block text-xs font-medium text-slate-400 mb-1">コンボ後の状況（任意）</label>
+                <input type="text" name="situation" value={(activeBranch || comboData).situation || ''} onChange={handleChange} className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-white text-sm" placeholder="ex. 2中P消費で+4F etc." /></div>
             </div>
             <div className="pt-3 mt-2 flex justify-end space-x-2 shrink-0">
               <button onClick={onClose} className="px-4 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-slate-800">キャンセル</button>
