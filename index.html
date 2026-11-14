@@ -1279,6 +1279,97 @@
       return <textarea ref={ref} value={value} onChange={onChange} placeholder={placeholder} className={`${className} overflow-hidden resize-none`} rows={1} />;
     }
 
+    // Independent flex rows keep long branch tails from stretching the main route.
+    // Each branch's left edge is measured from the move where it forks.
+    function ComboRouteView({ block, moves, onClick }) {
+      const mainRowRef = useRef(null);
+      const moveNodesRef = useRef([]);
+      const [anchorOffsets, setAnchorOffsets] = useState([]);
+      const moveIds = Array.isArray(block.moveIds) ? block.moveIds : [];
+      const branches = Array.isArray(block.branches) ? block.branches : [];
+      const getMove = id => moves.find(item => item.id === id || item.overrideId === id);
+      const stateLabel = (block.state === 'カウンター' || block.state === 'パニカン') &&
+        <span className={`shrink-0 rounded px-2 py-1 text-xs font-bold ${block.state === 'パニカン' ? 'bg-red-600 text-white' : 'bg-yellow-400 text-yellow-950'}`}>{block.state}</span>;
+
+      useEffect(() => {
+        const row = mainRowRef.current;
+        if (!row) return;
+        const measure = () => {
+          const parentRect = row.getBoundingClientRect();
+          const offsets = moveIds.map((_, index) => {
+            const node = moveNodesRef.current[index];
+            return node ? Math.round(node.getBoundingClientRect().left - parentRect.left) : 0;
+          });
+          setAnchorOffsets(previous => previous.length === offsets.length &&
+            previous.every((value, index) => value === offsets[index]) ? previous : offsets);
+        };
+        measure();
+        const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+        if (observer) {
+          observer.observe(row);
+          moveNodesRef.current.forEach(node => { if (node) observer.observe(node); });
+        }
+        window.addEventListener('resize', measure);
+        return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+      }, [moveIds.join('\u0001'), block.state, block.dmg, moves]);
+
+      const route = ids => ids.map((moveId, idx) => {
+        const move = getMove(moveId);
+        return <React.Fragment key={`${moveId}-${idx}`}>
+          {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
+          {idx < ids.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' &&
+            <ChevronRight size={14} className="text-slate-500 shrink-0" />}
+        </React.Fragment>;
+      });
+
+      return <div onClick={onClick} className="p-3 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 transition-all">
+        <div className="character-scroll overflow-x-auto pb-1">
+          <div className="w-max min-w-0">
+            <div ref={mainRowRef} className="flex w-max items-center gap-1.5 pb-1">
+              {moveIds.length ? moveIds.map((moveId, idx) => {
+                const move = getMove(moveId);
+                return <React.Fragment key={`${moveId}-${idx}`}>
+                  {idx === 0 && stateLabel}
+                  <div ref={node => { moveNodesRef.current[idx] = node; }} className="inline-flex items-center shrink-0">
+                    {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
+                  </div>
+                  {idx < moveIds.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' &&
+                    <ChevronRight size={14} className="text-slate-500 shrink-0" />}
+                </React.Fragment>;
+              }) : <div className="flex items-center gap-2">{stateLabel}<span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span></div>}
+              {moveIds.length > 0 && block.dmg !== '' && block.dmg != null &&
+                <span className="text-white text-xs font-semibold whitespace-nowrap">({block.dmg} dmg)</span>}
+            </div>
+            {branches.map((branch, index) => {
+              const count = Math.max(0, Math.min(moveIds.length, Number(branch.fromIndex ?? moveIds.length) || 0));
+              const anchor = Math.max(0, count - 1);
+              const tail = Array.isArray(branch.moveIds) ? branch.moveIds : [];
+              return <div key={branch.id || index} className="pt-1 pb-2 w-max"
+                style={{ marginLeft: anchorOffsets[anchor] || 0 }}>
+                <div className="pl-3 border-l-2 border-cyan-700/80">
+                  <div className="inline-flex items-center gap-1.5 rounded-md bg-slate-900/70 border border-slate-800 px-2 py-2 whitespace-nowrap">
+                    <span className="text-cyan-400 text-xs font-bold shrink-0">↳ 分岐{index + 1}</span>
+                    {tail.length ? route(tail) : <span className="text-slate-500 text-xs">技を追加してください</span>}
+                    {branch.dmg !== '' && branch.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({branch.dmg} dmg)</span>}
+                  </div>
+                  {(branch.selectionSituation || branch.situation) &&
+                    <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-300 mt-1">
+                      {branch.selectionSituation && <span>選択場面: {branch.selectionSituation}</span>}
+                      {branch.situation && <span>コンボ後の状況: {branch.situation}</span>}
+                    </div>}
+                </div>
+              </div>;
+            })}
+          </div>
+        </div>
+        {(block.situation || block.selectionSituation) &&
+          <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-white mt-2">
+            {block.selectionSituation && <span><span className="opacity-70">選択場面:</span> {block.selectionSituation}</span>}
+            {block.situation && <span><span className="opacity-70">コンボ後の状況:</span> {block.situation}</span>}
+          </div>}
+      </div>;
+    }
+
     function CardEditor({ card, moves, db, appId, user, applyLocalWrite, stageCard, cardDragProps, isDragTarget }) {
       const [editingBlock, setEditingBlock] = useState(null);
       const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -1406,71 +1497,10 @@
       const fullText = textBlocks.map(b => b.content || '').join('\n\n');
       const openCombo = () => setEditingBlock(combo || { id: createId(), type: 'combo', moveIds: [], state: 'ノーマル', dmg: '', situation: '', selectionSituation: '' });
 
-      const renderCombo = (block) => {
-        const moveIds = Array.isArray(block.moveIds) ? block.moveIds : [];
-        const branches = Array.isArray(block.branches) ? block.branches : [];
-        const getMove = id => moves.find(item => item.id === id || item.overrideId === id);
-        // The branch stores only the moves AFTER the fork. Never repeat the shared prefix.
-        const route = ids => ids.map((moveId, idx) => {
-          const move = getMove(moveId);
-          return <React.Fragment key={`${moveId}-${idx}`}>
-            {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
-            {idx < ids.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' && <ChevronRight size={14} className="text-slate-500 shrink-0" />}
-          </React.Fragment>;
-        });
-        const stateLabel = (block.state === 'カウンター' || block.state === 'パニカン') &&
-          <span className={`shrink-0 rounded px-2 py-1 text-xs font-bold ${block.state === 'パニカン' ? 'bg-red-600 text-white' : 'bg-yellow-400 text-yellow-950'}`}>{block.state}</span>;
-        return <div onClick={() => setEditingBlock(block)} className="p-3 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer hover:border-cyan-700 transition-all">
-          {/* One column per main-route move. Each branch starts directly below its fork move. */}
-          <div className="character-scroll overflow-x-auto pb-1">
-            <table className="border-separate border-spacing-0 w-max min-w-full">
-              <tbody>
-                <tr>
-                  {moveIds.length ? moveIds.map((moveId, idx) => {
-                    const move = getMove(moveId);
-                    return <td key={`${moveId}-${idx}`} className="align-top pr-2 pb-1">
-                      <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                        {idx === 0 && stateLabel}
-                        {move ? <MoveTile minimal move={move} /> : <span className="text-red-500 text-xs">Unknown Move</span>}
-                        {idx < moveIds.length - 1 && String(move?.name || '').trim().toUpperCase() !== 'CDR' && <ChevronRight size={14} className="text-slate-500 shrink-0" />}
-                        {idx === moveIds.length - 1 && block.dmg !== '' && block.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({block.dmg} dmg)</span>}
-                      </div>
-                    </td>;
-                  }) : <td className="pb-1"><div className="flex items-center gap-2">{stateLabel}<span className="text-slate-500 text-sm italic">クリックでコンボを入力。</span></div></td>}
-                </tr>
-                {branches.map((branch, index) => {
-                  const count = Math.max(0, Math.min(moveIds.length, Number(branch.fromIndex ?? moveIds.length) || 0));
-                  // fromIndex is the count of shared moves, so the fork is at count-1.
-                  const anchor = Math.max(0, count - 1);
-                  const total = Math.max(1, moveIds.length);
-                  const tail = Array.isArray(branch.moveIds) ? branch.moveIds : [];
-                  return <tr key={branch.id || index}>
-                    {anchor > 0 && <td colSpan={anchor} />}
-                    <td colSpan={total - anchor} className="align-top pt-1 pb-2">
-                      <div className="ml-2 pl-3 border-l-2 border-cyan-700/80">
-                        <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-slate-900/70 border border-slate-800 px-2 py-2">
-                          <span className="text-cyan-400 text-xs font-bold shrink-0">↳ 分岐{index + 1}</span>
-                          {tail.length ? route(tail) : <span className="text-slate-500 text-xs">技を追加してください</span>}
-                          {branch.dmg !== '' && branch.dmg != null && <span className="text-white text-xs font-semibold whitespace-nowrap">({branch.dmg} dmg)</span>}
-                        </div>
-                        {(branch.selectionSituation || branch.situation) && <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-300 mt-1">
-                          {branch.selectionSituation && <span>選択場面: {branch.selectionSituation}</span>}
-                          {branch.situation && <span>コンボ後の状況: {branch.situation}</span>}
-                        </div>}
-                      </div>
-                    </td>
-                  </tr>;
-                })}
-              </tbody>
-            </table>
-          </div>
-          {(block.situation || block.selectionSituation) &&
-            <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-white mt-2">
-              {block.selectionSituation && <span><span className="opacity-70">選択場面:</span> {block.selectionSituation}</span>}
-              {block.situation && <span><span className="opacity-70">コンボ後の状況:</span> {block.situation}</span>}
-            </div>}
-        </div>;
-      };
+      const renderCombo = (block) => (
+        <ComboRouteView key={block.id} block={block} moves={moves}
+          onClick={() => setEditingBlock(block)} />
+      );
 
       // Old cards may contain multiple combo blocks. Keep them visible rather
       // than silently deleting their data; provide an explicit split operation.
